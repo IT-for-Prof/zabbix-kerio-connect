@@ -8,6 +8,8 @@ import yaml
 SCRIPT_TEMPLATE = Path("template/kerio_connect_script/template_app_kerio_connect_script.yaml")
 AGENT_TEMPLATE = Path("template/kerio_connect_agent/template_app_kerio_connect_agent.yaml")
 ALL_TEMPLATES = [SCRIPT_TEMPLATE, AGENT_TEMPLATE]
+PROJECT_DESCRIPTION = "Zabbix 7 templates for monitoring Kerio Connect via JSON-RPC Admin API"
+PROJECT_URL = "https://github.com/IT-for-Prof/zabbix-kerio-connect"
 
 
 def load_template(path: Path) -> dict:
@@ -22,6 +24,32 @@ def test_valid_yaml(path):
 @pytest.mark.parametrize("path", ALL_TEMPLATES)
 def test_zabbix_version_is_7(path):
     assert load_template(path)["zabbix_export"]["version"] == "7.0"
+
+
+@pytest.mark.parametrize("path", ALL_TEMPLATES)
+def test_template_description_contains_project_description_and_original_link(path):
+    description = load_template(path)["zabbix_export"]["templates"][0]["description"]
+    assert PROJECT_DESCRIPTION in description
+    assert PROJECT_URL in description
+
+
+def test_agent_template_tags_match_script_template():
+    script = load_template(SCRIPT_TEMPLATE)["zabbix_export"]["templates"][0]
+    agent = load_template(AGENT_TEMPLATE)["zabbix_export"]["templates"][0]
+    assert agent.get("tags", []) == script.get("tags", [])
+
+    script_items = {item["key"]: item for item in script.get("items", [])}
+    agent_items = {item["key"]: item for item in agent.get("items", [])}
+    for key, script_item in script_items.items():
+        assert agent_items[key].get("tags", []) == script_item.get("tags", [])
+
+    script_rules = {rule["key"]: rule for rule in script.get("discovery_rules", [])}
+    agent_rules = {rule["key"]: rule for rule in agent.get("discovery_rules", [])}
+    for key, script_rule in script_rules.items():
+        script_prototypes = {prototype["key"]: prototype for prototype in script_rule.get("item_prototypes", [])}
+        agent_prototypes = {prototype["key"]: prototype for prototype in agent_rules[key].get("item_prototypes", [])}
+        for prototype_key, script_prototype in script_prototypes.items():
+            assert agent_prototypes[prototype_key].get("tags", []) == script_prototype.get("tags", [])
 
 
 @pytest.mark.parametrize("path", ALL_TEMPLATES)

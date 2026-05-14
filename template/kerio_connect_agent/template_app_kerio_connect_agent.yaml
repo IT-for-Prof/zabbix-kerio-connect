@@ -8,6 +8,8 @@ zabbix_export:
     template: Kerio Connect by Zabbix agent
     name: Kerio Connect by Zabbix agent
     description: |-
+      Zabbix 7 templates for monitoring Kerio Connect via JSON-RPC Admin API.
+
       Monitors Kerio Connect mail server via its JSON-RPC Admin API,
       called by a Zabbix agent UserParameter that runs kerio_collector.py.
       Credentials live in a local config file (default
@@ -17,6 +19,7 @@ zabbix_export:
       Version: 1.0.0
       Author:  Konstantin Tyutyunnik (Константин Тютюнник)
       Site:    https://itforprof.com
+      Original: https://github.com/IT-for-Prof/zabbix-kerio-connect
     groups:
     - name: Templates/Applications
     macros:
@@ -44,6 +47,11 @@ zabbix_export:
     - macro: '{$KERIO.SERVICES.EXCLUDE}'
       value: ^$
       description: 'Regex matched against discovered service names; matching services are excluded from monitoring. Default ^$ matches nothing (everything is monitored). Note: the regex is anchored, so Secure variants must be listed separately. Example: ^(POP3|HTTP|XMPP|NNTP|Secure NNTP|Secure XMPP)$'
+    tags:
+    - tag: class
+      value: application
+    - tag: target
+      value: kerio-connect
     items:
     - uuid: ee354faf552d46a184c5ed329f2b98d3
       name: 'Kerio Connect: Get API data'
@@ -67,6 +75,9 @@ zabbix_export:
         4 API calls over HTTPS easily exceed the default 3-second timeout.
 
         '
+      tags:
+      - tag: component
+        value: raw
       triggers:
       - uuid: 46fe429fc93342058e81dd82b40cd29f
         expression: nodata(/Kerio Connect by Zabbix agent/kerio.api.master,5m)=1
@@ -86,6 +97,9 @@ zabbix_export:
       - type: JSONPATH
         parameters:
         - $.statistics.storage.occupied.value
+      tags:
+      - tag: component
+        value: storage
     - uuid: a25be4fdde314f33897b2f3dbf06cce9
       name: 'Kerio Connect: Disk total'
       type: DEPENDENT
@@ -98,6 +112,9 @@ zabbix_export:
       - type: JSONPATH
         parameters:
         - $.statistics.storage.total.value
+      tags:
+      - tag: component
+        value: storage
     - uuid: 238b0411555a4d35ac1b6752485c1d16
       name: 'Kerio Connect: Disk used %'
       type: DEPENDENT
@@ -115,6 +132,9 @@ zabbix_export:
         parameters:
         - (\d+(?:\.\d+)?)
         - \1
+      tags:
+      - tag: component
+        value: storage
       triggers:
       - uuid: 333c7bcdb9fb40439c46ffb54b252881
         expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.WARN}
@@ -174,6 +194,9 @@ zabbix_export:
       - type: JSONPATH
         parameters:
         - $.statistics.storedInQueue.count
+      tags:
+      - tag: component
+        value: queue
       triggers:
       - uuid: caf2923264a046328febdf147ed0786c
         expression: last(/Kerio Connect by Zabbix agent/kerio.queue.total)>{$KERIO.QUEUE.WARN}
@@ -196,6 +219,9 @@ zabbix_export:
       - type: JSONPATH
         parameters:
         - $.statistics.uptime.days
+      tags:
+      - tag: component
+        value: health
     - uuid: 32d56a0502b84214862238ce73e27f9c
       name: 'Kerio Connect: SMTP connections'
       type: DEPENDENT
@@ -216,6 +242,9 @@ zabbix_export:
         - '0'
         - '1000000000'
         error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: smtp
     - uuid: cdc9a6dbf6224300bf2ed0a7c27c336b
       name: 'Kerio Connect: SMTP messages received'
       type: DEPENDENT
@@ -236,6 +265,9 @@ zabbix_export:
         - '0'
         - '1000000000'
         error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: smtp
     - uuid: a7f06e795058410895d036f2f2ac39ef
       name: 'Kerio Connect: SMTP messages sent'
       type: DEPENDENT
@@ -256,6 +288,9 @@ zabbix_export:
         - '0'
         - '1000000000'
         error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: smtp
     - uuid: 3a4fcce64eb24df4846f79dc8556ea28
       name: 'Kerio Connect: SMTP authentication failures'
       type: DEPENDENT
@@ -276,6 +311,9 @@ zabbix_export:
         - '0'
         - '1000000000'
         error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: smtp
       triggers:
       - uuid: 2f0c9b1e5e844f8a92e178a3b1c4d5a2
         expression: avg(/Kerio Connect by Zabbix agent/kerio.smtp.auth.failures,5m)>{$KERIO.SMTP.AUTH.WARN}
@@ -305,6 +343,9 @@ zabbix_export:
         - '0'
         - '1000000000'
         error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: imap
     - uuid: 18b92f296bbd4eaa9c6a1873dd6d5b1e
       name: 'Kerio Connect: POP3 connections'
       type: DEPENDENT
@@ -325,6 +366,9 @@ zabbix_export:
         - '0'
         - '1000000000'
         error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: pop3
     - uuid: aa1aab544de64c00977177e4a2e86f93
       name: 'Kerio Connect: LDAP connections'
       type: DEPENDENT
@@ -345,6 +389,9 @@ zabbix_export:
         - '0'
         - '1000000000'
         error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: ldap
     - uuid: d8d84af00f4f44a3b331c89acff19450
       name: 'Kerio Connect: Web connections'
       type: DEPENDENT
@@ -365,6 +412,9 @@ zabbix_export:
         - '0'
         - '1000000000'
         error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: web
     - uuid: ea545973df05461597b67b35a5768a9e
       name: 'Kerio Connect: XMPP connections'
       type: DEPENDENT
@@ -385,6 +435,9 @@ zabbix_export:
         - '0'
         - '1000000000'
         error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: xmpp
     - uuid: f8d7531bd24c43a5a70e75c290fc0ff7
       name: 'Kerio Connect: Spam messages checked'
       type: DEPENDENT
@@ -405,6 +458,9 @@ zabbix_export:
         - '0'
         - '1000000000'
         error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: antispam
     - uuid: 2d24db1b90a440ad9a9bbce34fb1ca75
       name: 'Kerio Connect: Spam messages rejected'
       type: DEPENDENT
@@ -425,6 +481,9 @@ zabbix_export:
         - '0'
         - '1000000000'
         error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: antispam
     - uuid: d2e3c1c92435474e86e1b67692f171de
       name: 'Kerio Connect: AV messages scanned'
       type: DEPENDENT
@@ -445,6 +504,9 @@ zabbix_export:
         - '0'
         - '1000000000'
         error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: antivirus
     - uuid: 1b7eef2c2fda40109cfe134fb2c13eb4
       name: 'Kerio Connect: AV infected messages'
       type: DEPENDENT
@@ -465,6 +527,9 @@ zabbix_export:
         - '0'
         - '1000000000'
         error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: antivirus
       triggers:
       - uuid: c4494ce53eaa4d9283a5ba55073019d6
         expression: last(/Kerio Connect by Zabbix agent/kerio.av.infected)>0
@@ -494,6 +559,9 @@ zabbix_export:
         - '0'
         - '1000000000'
         error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: greylisting
     - uuid: da5cb21e4667477b9c5a6e6340fbd453
       name: 'Kerio Connect: Antibombing rejected connections'
       type: DEPENDENT
@@ -514,6 +582,9 @@ zabbix_export:
         - '0'
         - '1000000000'
         error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: anti-bombing
     - uuid: 76ff865632d84d8c8864a8e134b36f3c
       name: 'Kerio Connect: Licensed users'
       type: DEPENDENT
@@ -526,6 +597,9 @@ zabbix_export:
       - type: JSONPATH
         parameters:
         - $.license.users
+      tags:
+      - tag: component
+        value: license
     - uuid: cde7b4e944894e60adf047b0a6616676
       name: 'Kerio Connect: License expiry date'
       type: DEPENDENT
@@ -539,6 +613,9 @@ zabbix_export:
       - type: JSONPATH
         parameters:
         - $.license.expirations[?(@.type=="License")].date.first()
+      tags:
+      - tag: component
+        value: license
     - uuid: 5e22ab4353564337aabfeaf753f79c59
       name: 'Kerio Connect: License days remaining'
       type: DEPENDENT
@@ -552,6 +629,9 @@ zabbix_export:
       - type: JSONPATH
         parameters:
         - $.license.expirations[?(@.type=="License")].remainingDays.first()
+      tags:
+      - tag: component
+        value: license
       triggers:
       - uuid: d4feb43a01054edca1e86881b91f16f5
         expression: last(/Kerio Connect by Zabbix agent/kerio.license.days)<30
@@ -574,6 +654,9 @@ zabbix_export:
       - type: JSONPATH
         parameters:
         - $.server.version
+      tags:
+      - tag: component
+        value: info
     discovery_rules:
     - uuid: 0458b06db18a40088d0eda9c10ca34a8
       name: 'Kerio Connect: Service discovery'
@@ -595,6 +678,11 @@ zabbix_export:
           parameters:
           - $.services[?(@.name=="{#SERVICE}")].isRunning.first()
         - type: BOOL_TO_DECIMAL
+        tags:
+        - tag: component
+          value: services
+        - tag: service
+          value: '{#SERVICE}'
         trigger_prototypes:
         - uuid: 976e5145f8344785a1e405774bcfeca6
           expression: last(/Kerio Connect by Zabbix agent/kerio.service.status[{#SERVICE}])=0
