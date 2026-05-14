@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+
+# Local secrets — never commit real credentials
+*.conf
+!tests/fixtures/*.conf
+!template/kerio_connect_agent/zabbix_agent2.d/*.conf
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets.*
+
+# Tooling / agent state
+.codex/
+.claude/
+.cursor/
+.mcp.json
+
+# Build / temp
+*.log
+*.tmp
+*.bak
+*.orig

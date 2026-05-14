@@ -1,0 +1,25 @@
+[project]
+name = "zabbix-kerio-connect"
+version = "1.0.0"
+description = "Zabbix 7 templates for monitoring Kerio Connect via JSON-RPC Admin API"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Konstantin Tyutyunnik" }]
+urls = { Homepage = "https://itforprof.com", Repository = "https://github.com/IT-for-Prof/zabbix-kerio-connect" }
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3,<10",
+    "pytest-mock==3.14.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = ["live: requires network access to Kerio host"]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["tests/*"]

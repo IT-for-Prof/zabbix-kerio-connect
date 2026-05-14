@@ -1,0 +1,609 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+  - uuid: 3fb6f3365c5d4134bb04994517f4dc0b
+    name: Templates/Applications
+  templates:
+  - uuid: fee3cbf6d37940ff993fe8c93a312102
+    template: Kerio Connect by Zabbix agent
+    name: Kerio Connect by Zabbix agent
+    description: |-
+      Monitors Kerio Connect mail server via its JSON-RPC Admin API,
+      called by a Zabbix agent UserParameter that runs kerio_collector.py.
+      Credentials live in a local config file (default
+      /etc/zabbix/kerio_connect.conf) — not in zabbix_agent2.conf, where
+      host macros are not expanded.
+
+      Version: 1.0.0
+      Author:  Konstantin Tyutyunnik (Константин Тютюнник)
+      Site:    https://itforprof.com
+    groups:
+    - name: Templates/Applications
+    macros:
+    - macro: '{$KERIO.AGENT.CONFIG}'
+      value: /etc/zabbix/kerio_connect.conf
+      description: 'Informational: path the agent UserParameter reads. Not consumed by the template; change the UserParameter to relocate.'
+    - macro: '{$KERIO.QUEUE.WARN}'
+      value: '100'
+      description: Queue depth warning threshold (messages).
+    - macro: '{$KERIO.DISK.WARN}'
+      value: '80'
+      description: Disk usage warning threshold (percent).
+    - macro: '{$KERIO.DISK.AVG}'
+      value: '90'
+      description: Disk usage average severity threshold (percent).
+    - macro: '{$KERIO.DISK.HIGH}'
+      value: '95'
+      description: Disk usage critical threshold (percent).
+    - macro: '{$KERIO.DISK.DISASTER}'
+      value: '99'
+      description: Disk usage disaster threshold (percent). Above this, Kerio stops accepting mail.
+    - macro: '{$KERIO.SMTP.AUTH.WARN}'
+      value: '1'
+      description: SMTP auth-failure rate threshold (failures/s, 5-minute average). 1/s sustained = 300 attempts/5 min.
+    - macro: '{$KERIO.SERVICES.EXCLUDE}'
+      value: ^$
+      description: 'Regex matched against discovered service names; matching services are excluded from monitoring. Default ^$ matches nothing (everything is monitored). Note: the regex is anchored, so Secure variants must be listed separately. Example: ^(POP3|HTTP|XMPP|NNTP|Secure NNTP|Secure XMPP)$'
+    items:
+    - uuid: ee354faf552d46a184c5ed329f2b98d3
+      name: 'Kerio Connect: Get API data'
+      type: ZABBIX_ACTIVE
+      key: kerio.api.master
+      delay: 1m
+      history: 1h
+      trends: '0'
+      timeout: 30s
+      value_type: TEXT
+      description: 'Master item. UserParameter on the agent runs kerio_collector.py and
+
+        returns a JSON blob with four top-level keys: statistics, services,
+
+        license, server. All other items derive from this via JSONPath.
+
+        See docs/api_fields.md for the contract.
+
+        Requires Timeout >= 30 in /etc/zabbix/zabbix_agent2.conf — login +
+
+        4 API calls over HTTPS easily exceed the default 3-second timeout.
+
+        '
+      triggers:
+      - uuid: 46fe429fc93342058e81dd82b40cd29f
+        expression: nodata(/Kerio Connect by Zabbix agent/kerio.api.master,5m)=1
+        name: 'Kerio Connect: API data collection failed'
+        priority: AVERAGE
+        manual_close: 'YES'
+        description: The master item has not returned data for 5 minutes. Check network access to Kerio port 4040 and API credentials.
+    - uuid: a067c2e9ffc04d48b1d441f6a5e8639d
+      name: 'Kerio Connect: Disk used'
+      type: DEPENDENT
+      key: kerio.disk.used
+      delay: '0'
+      units: MB
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.storage.occupied.value
+    - uuid: a25be4fdde314f33897b2f3dbf06cce9
+      name: 'Kerio Connect: Disk total'
+      type: DEPENDENT
+      key: kerio.disk.total
+      delay: '0'
+      units: MB
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.storage.total.value
+    - uuid: 238b0411555a4d35ac1b6752485c1d16
+      name: 'Kerio Connect: Disk used %'
+      type: DEPENDENT
+      key: kerio.disk.pct
+      delay: '0'
+      value_type: FLOAT
+      units: '%'
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.storage.percentage
+      - type: REGEX
+        parameters:
+        - (\d+(?:\.\d+)?)
+        - \1
+      triggers:
+      - uuid: 333c7bcdb9fb40439c46ffb54b252881
+        expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.WARN}
+        name: 'Kerio Connect: Disk usage > {$KERIO.DISK.WARN}%'
+        priority: WARNING
+        description: 'Mail store disk usage exceeded {$KERIO.DISK.WARN}% (current: {ITEM.VALUE1}%). Free space before mailboxes stop accepting messages.'
+        dependencies:
+        - &id001
+          name: 'Kerio Connect: API data collection failed'
+          expression: nodata(/Kerio Connect by Zabbix agent/kerio.api.master,5m)=1
+        - &id002
+          name: 'Kerio Connect: Disk usage > {$KERIO.DISK.AVG}%'
+          expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.AVG}
+        - &id003
+          name: 'Kerio Connect: Disk usage > {$KERIO.DISK.HIGH}%'
+          expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.HIGH}
+        - &id004
+          name: 'Kerio Connect: Disk usage > {$KERIO.DISK.DISASTER}%'
+          expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.DISASTER}
+      - uuid: 96d5bccf799f48be9c82133345f6f43b
+        expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.AVG}
+        name: 'Kerio Connect: Disk usage > {$KERIO.DISK.AVG}%'
+        priority: AVERAGE
+        description: 'Mail store disk usage exceeded {$KERIO.DISK.AVG}% (current: {ITEM.VALUE1}%). Plan capacity — the next escalation is High at {$KERIO.DISK.HIGH}%.'
+        dependencies:
+        - *id001
+        - *id003
+        - *id004
+      - uuid: b423fc1dc80648d1840aee786c16a531
+        expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.HIGH}
+        name: 'Kerio Connect: Disk usage > {$KERIO.DISK.HIGH}%'
+        priority: HIGH
+        description: 'Mail store disk usage exceeded {$KERIO.DISK.HIGH}% (current: {ITEM.VALUE1}%). Mailboxes will stop accepting messages soon — free space immediately.'
+        dependencies:
+        - *id001
+        - *id004
+      - uuid: 5c32830179d94d73828d571569fe4a13
+        expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.DISASTER}
+        name: 'Kerio Connect: Disk usage > {$KERIO.DISK.DISASTER}%'
+        priority: DISASTER
+        description: 'Mail store disk usage exceeded {$KERIO.DISK.DISASTER}% (current: {ITEM.VALUE1}%). Kerio Connect stops accepting messages at full disk — free space NOW.'
+        dependencies:
+        - *id001
+    - uuid: 22ee1298f8b2413ca76559bc0d0a67a8
+      name: 'Kerio Connect: Queue total'
+      type: DEPENDENT
+      key: kerio.queue.total
+      delay: '0'
+      value_type: UNSIGNED
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.storedInQueue.count
+      triggers:
+      - uuid: caf2923264a046328febdf147ed0786c
+        expression: last(/Kerio Connect by Zabbix agent/kerio.queue.total)>{$KERIO.QUEUE.WARN}
+        name: 'Kerio Connect: High message queue depth'
+        priority: WARNING
+        description: 'Queue depth exceeded {$KERIO.QUEUE.WARN} messages (current: {ITEM.VALUE1}). May indicate delivery failures or upstream issues.'
+        dependencies:
+        - *id001
+    - uuid: e97b66d6261f44e288aed8d07d8fe98f
+      name: 'Kerio Connect: Uptime days'
+      type: DEPENDENT
+      key: kerio.uptime.days
+      delay: '0'
+      value_type: UNSIGNED
+      units: d
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.uptime.days
+    - uuid: 32d56a0502b84214862238ce73e27f9c
+      name: 'Kerio Connect: SMTP connections'
+      type: DEPENDENT
+      key: kerio.smtp.connections
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.smtpServer.totalIncomingConnections
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+    - uuid: cdc9a6dbf6224300bf2ed0a7c27c336b
+      name: 'Kerio Connect: SMTP messages received'
+      type: DEPENDENT
+      key: kerio.smtp.messages.in
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.received.count
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+    - uuid: a7f06e795058410895d036f2f2ac39ef
+      name: 'Kerio Connect: SMTP messages sent'
+      type: DEPENDENT
+      key: kerio.smtp.messages.out
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.transmitted.count
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+    - uuid: 3a4fcce64eb24df4846f79dc8556ea28
+      name: 'Kerio Connect: SMTP authentication failures'
+      type: DEPENDENT
+      key: kerio.smtp.auth.failures
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.smtpServer.authenticationFailures
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      triggers:
+      - uuid: 2f0c9b1e5e844f8a92e178a3b1c4d5a2
+        expression: avg(/Kerio Connect by Zabbix agent/kerio.smtp.auth.failures,5m)>{$KERIO.SMTP.AUTH.WARN}
+        name: 'Kerio Connect: High SMTP authentication failure rate'
+        priority: WARNING
+        description: SMTP auth failure rate over the last 5 minutes exceeded {$KERIO.SMTP.AUTH.WARN}/s. Possible brute-force attack or misconfigured client.
+        dependencies:
+        - *id001
+    - uuid: eacca0d798b64f25963081bcd0f63765
+      name: 'Kerio Connect: IMAP connections'
+      type: DEPENDENT
+      key: kerio.imap.connections
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.imapServer.totalIncomingConnections
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+    - uuid: 18b92f296bbd4eaa9c6a1873dd6d5b1e
+      name: 'Kerio Connect: POP3 connections'
+      type: DEPENDENT
+      key: kerio.pop3.connections
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.pop3Server.totalIncomingConnections
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+    - uuid: aa1aab544de64c00977177e4a2e86f93
+      name: 'Kerio Connect: LDAP connections'
+      type: DEPENDENT
+      key: kerio.ldap.connections
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.ldapServer.totalIncomingConnections
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+    - uuid: d8d84af00f4f44a3b331c89acff19450
+      name: 'Kerio Connect: Web connections'
+      type: DEPENDENT
+      key: kerio.web.connections
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.webServer.totalIncomingConnections
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+    - uuid: ea545973df05461597b67b35a5768a9e
+      name: 'Kerio Connect: XMPP connections'
+      type: DEPENDENT
+      key: kerio.xmpp.connections
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.xmppServer.totalIncomingConnections
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+    - uuid: f8d7531bd24c43a5a70e75c290fc0ff7
+      name: 'Kerio Connect: Spam messages checked'
+      type: DEPENDENT
+      key: kerio.spam.checked
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.spam.checked
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+    - uuid: 2d24db1b90a440ad9a9bbce34fb1ca75
+      name: 'Kerio Connect: Spam messages rejected'
+      type: DEPENDENT
+      key: kerio.spam.rejected
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.spam.rejected
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+    - uuid: d2e3c1c92435474e86e1b67692f171de
+      name: 'Kerio Connect: AV messages scanned'
+      type: DEPENDENT
+      key: kerio.av.scanned
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.antivirus.checkedAttachments
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+    - uuid: 1b7eef2c2fda40109cfe134fb2c13eb4
+      name: 'Kerio Connect: AV infected messages'
+      type: DEPENDENT
+      key: kerio.av.infected
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.antivirus.foundViruses
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      triggers:
+      - uuid: c4494ce53eaa4d9283a5ba55073019d6
+        expression: last(/Kerio Connect by Zabbix agent/kerio.av.infected)>0
+        name: 'Kerio Connect: Antivirus infection detected'
+        priority: HIGH
+        manual_close: 'YES'
+        description: One or more infected attachments were detected. Check Kerio Connect antivirus logs.
+        dependencies:
+        - *id001
+    - uuid: 3346ab29f5ff407984abae99836b3821
+      name: 'Kerio Connect: Greylisting delayed messages'
+      type: DEPENDENT
+      key: kerio.greylisting.delayed
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.greylisting.messagesDelayed
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+    - uuid: da5cb21e4667477b9c5a6e6340fbd453
+      name: 'Kerio Connect: Antibombing rejected connections'
+      type: DEPENDENT
+      key: kerio.antibombing.rejected
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.antibombing.rejectedConnections
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+    - uuid: 76ff865632d84d8c8864a8e134b36f3c
+      name: 'Kerio Connect: Licensed users'
+      type: DEPENDENT
+      key: kerio.license.users
+      delay: '0'
+      value_type: UNSIGNED
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.license.users
+    - uuid: cde7b4e944894e60adf047b0a6616676
+      name: 'Kerio Connect: License expiry date'
+      type: DEPENDENT
+      key: kerio.license.expiry
+      delay: '0'
+      value_type: UNSIGNED
+      units: unixtime
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.license.expirations[?(@.type=="License")].date.first()
+    - uuid: 5e22ab4353564337aabfeaf753f79c59
+      name: 'Kerio Connect: License days remaining'
+      type: DEPENDENT
+      key: kerio.license.days
+      delay: '0'
+      value_type: UNSIGNED
+      units: d
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.license.expirations[?(@.type=="License")].remainingDays.first()
+      triggers:
+      - uuid: d4feb43a01054edca1e86881b91f16f5
+        expression: last(/Kerio Connect by Zabbix agent/kerio.license.days)<30
+        name: 'Kerio Connect: License expires in less than 30 days'
+        priority: WARNING
+        description: 'Renew the Kerio Connect license. Current days remaining: {ITEM.VALUE1}.'
+        dependencies:
+        - *id001
+    - uuid: 71bb0756299d433686e1722ec19fe99f
+      name: 'Kerio Connect: Server version'
+      type: DEPENDENT
+      key: kerio.version
+      delay: '0'
+      trends: '0'
+      value_type: TEXT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.server.version
+    discovery_rules:
+    - uuid: 0458b06db18a40088d0eda9c10ca34a8
+      name: 'Kerio Connect: Service discovery'
+      type: ZABBIX_ACTIVE
+      key: kerio.services.discovery
+      delay: 10m
+      timeout: 30s
+      item_prototypes:
+      - uuid: 50d3db28ed68476db1497bdaec2e516f
+        name: 'Kerio Connect: Service {#SERVICE} status'
+        type: DEPENDENT
+        key: kerio.service.status[{#SERVICE}]
+        delay: '0'
+        value_type: UNSIGNED
+        master_item:
+          key: kerio.api.master
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.services[?(@.name=="{#SERVICE}")].isRunning.first()
+        - type: BOOL_TO_DECIMAL
+        trigger_prototypes:
+        - uuid: 976e5145f8344785a1e405774bcfeca6
+          expression: last(/Kerio Connect by Zabbix agent/kerio.service.status[{#SERVICE}])=0
+          name: 'Kerio Connect: Service {#SERVICE} is not running'
+          priority: HIGH
+          manual_close: 'YES'
+          description: Discovered Kerio service is stopped. If this is intentional, add the service to {$KERIO.SERVICES.EXCLUDE} on the host.
+          dependencies:
+          - *id001
+      filter:
+        evaltype: AND
+        conditions:
+        - macro: '{#SERVICE}'
+          value: '{$KERIO.SERVICES.EXCLUDE}'
+          operator: NOT_MATCHES_REGEX
+          formulaid: A
+    vendor:
+      name: itforprof.com — Konstantin Tyutyunnik
+      version: 1.0.0
