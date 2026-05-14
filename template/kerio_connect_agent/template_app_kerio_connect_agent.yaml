@@ -120,6 +120,7 @@ zabbix_export:
         expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.WARN}
         name: 'Kerio Connect: Disk usage > {$KERIO.DISK.WARN}%'
         priority: WARNING
+        manual_close: 'YES'
         description: 'Mail store disk usage exceeded {$KERIO.DISK.WARN}% (current: {ITEM.VALUE1}%). Free space before mailboxes stop accepting messages.'
         dependencies:
         - &id001
@@ -138,6 +139,7 @@ zabbix_export:
         expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.AVG}
         name: 'Kerio Connect: Disk usage > {$KERIO.DISK.AVG}%'
         priority: AVERAGE
+        manual_close: 'YES'
         description: 'Mail store disk usage exceeded {$KERIO.DISK.AVG}% (current: {ITEM.VALUE1}%). Plan capacity — the next escalation is High at {$KERIO.DISK.HIGH}%.'
         dependencies:
         - *id001
@@ -147,6 +149,7 @@ zabbix_export:
         expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.HIGH}
         name: 'Kerio Connect: Disk usage > {$KERIO.DISK.HIGH}%'
         priority: HIGH
+        manual_close: 'YES'
         description: 'Mail store disk usage exceeded {$KERIO.DISK.HIGH}% (current: {ITEM.VALUE1}%). Mailboxes will stop accepting messages soon — free space immediately.'
         dependencies:
         - *id001
@@ -155,6 +158,7 @@ zabbix_export:
         expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.DISASTER}
         name: 'Kerio Connect: Disk usage > {$KERIO.DISK.DISASTER}%'
         priority: DISASTER
+        manual_close: 'YES'
         description: 'Mail store disk usage exceeded {$KERIO.DISK.DISASTER}% (current: {ITEM.VALUE1}%). Kerio Connect stops accepting messages at full disk — free space NOW.'
         dependencies:
         - *id001
@@ -175,6 +179,7 @@ zabbix_export:
         expression: last(/Kerio Connect by Zabbix agent/kerio.queue.total)>{$KERIO.QUEUE.WARN}
         name: 'Kerio Connect: High message queue depth'
         priority: WARNING
+        manual_close: 'YES'
         description: 'Queue depth exceeded {$KERIO.QUEUE.WARN} messages (current: {ITEM.VALUE1}). May indicate delivery failures or upstream issues.'
         dependencies:
         - *id001
@@ -276,6 +281,7 @@ zabbix_export:
         expression: avg(/Kerio Connect by Zabbix agent/kerio.smtp.auth.failures,5m)>{$KERIO.SMTP.AUTH.WARN}
         name: 'Kerio Connect: High SMTP authentication failure rate'
         priority: WARNING
+        manual_close: 'YES'
         description: SMTP auth failure rate over the last 5 minutes exceeded {$KERIO.SMTP.AUTH.WARN}/s. Possible brute-force attack or misconfigured client.
         dependencies:
         - *id001
@@ -551,6 +557,7 @@ zabbix_export:
         expression: last(/Kerio Connect by Zabbix agent/kerio.license.days)<30
         name: 'Kerio Connect: License expires in less than 30 days'
         priority: WARNING
+        manual_close: 'YES'
         description: 'Renew the Kerio Connect license. Current days remaining: {ITEM.VALUE1}.'
         dependencies:
         - *id001
