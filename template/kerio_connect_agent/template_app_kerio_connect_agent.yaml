@@ -7,6 +7,9 @@ zabbix_export:
   - uuid: fee3cbf6d37940ff993fe8c93a312102
     template: Kerio Connect by Zabbix agent
     name: Kerio Connect by Zabbix agent
+    vendor:
+      name: itforprof.com
+      version: 1.0.0
     description: |-
       Zabbix 7 templates for monitoring Kerio Connect via JSON-RPC Admin API.
 
@@ -16,10 +19,10 @@ zabbix_export:
       /etc/zabbix/kerio_connect.conf) — not in zabbix_agent2.conf, where
       host macros are not expanded.
 
-      Version: 1.0.0
-      Author:  Konstantin Tyutyunnik (Константин Тютюнник)
+      Author:  Konstantin Tyutyunnik / Константин Тютюнник
       Site:    https://itforprof.com
-      Original: https://github.com/IT-for-Prof/zabbix-kerio-connect
+      Repo:    https://github.com/IT-for-Prof/zabbix-kerio-connect
+      License: MIT (c) 2026 Konstantin Tyutyunnik
     groups:
     - name: Templates/Applications
     macros:
@@ -44,9 +47,6 @@ zabbix_export:
     - macro: '{$KERIO.SMTP.AUTH.WARN}'
       value: '1'
       description: SMTP auth-failure rate threshold (failures/s, 5-minute average). 1/s sustained = 300 attempts/5 min.
-    - macro: '{$KERIO.SERVICES.EXCLUDE}'
-      value: ^$
-      description: 'Regex matched against discovered service names; matching services are excluded from monitoring. Default ^$ matches nothing (everything is monitored). Note: the regex is anchored, so Secure variants must be listed separately. Example: ^(POP3|HTTP|XMPP|NNTP|Secure NNTP|Secure XMPP)$'
     tags:
     - tag: class
       value: application
@@ -82,7 +82,11 @@ zabbix_export:
       - uuid: 46fe429fc93342058e81dd82b40cd29f
         expression: nodata(/Kerio Connect by Zabbix agent/kerio.api.master,5m)=1
         name: 'Kerio Connect: API data collection failed'
+        event_name: 'Kerio Connect on {HOST.NAME}: API data collection failed (no data for 5m)'
         priority: AVERAGE
+        tags:
+        - tag: scope
+          value: availability
         manual_close: 'YES'
         description: The master item has not returned data for 5 minutes. Check network access to Kerio port 4040 and API credentials.
     - uuid: a067c2e9ffc04d48b1d441f6a5e8639d
@@ -139,7 +143,11 @@ zabbix_export:
       - uuid: 333c7bcdb9fb40439c46ffb54b252881
         expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.WARN}
         name: 'Kerio Connect: Disk usage > {$KERIO.DISK.WARN}%'
+        event_name: 'Kerio Connect on {HOST.NAME}: mail store {ITEM.LASTVALUE1}% used (> {$KERIO.DISK.WARN}%)'
         priority: WARNING
+        tags:
+        - tag: scope
+          value: capacity
         manual_close: 'YES'
         description: 'Mail store disk usage exceeded {$KERIO.DISK.WARN}% (current: {ITEM.VALUE1}%). Free space before mailboxes stop accepting messages.'
         dependencies:
@@ -158,7 +166,11 @@ zabbix_export:
       - uuid: 96d5bccf799f48be9c82133345f6f43b
         expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.AVG}
         name: 'Kerio Connect: Disk usage > {$KERIO.DISK.AVG}%'
+        event_name: 'Kerio Connect on {HOST.NAME}: mail store {ITEM.LASTVALUE1}% used (> {$KERIO.DISK.AVG}%)'
         priority: AVERAGE
+        tags:
+        - tag: scope
+          value: capacity
         manual_close: 'YES'
         description: 'Mail store disk usage exceeded {$KERIO.DISK.AVG}% (current: {ITEM.VALUE1}%). Plan capacity — the next escalation is High at {$KERIO.DISK.HIGH}%.'
         dependencies:
@@ -168,7 +180,11 @@ zabbix_export:
       - uuid: b423fc1dc80648d1840aee786c16a531
         expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.HIGH}
         name: 'Kerio Connect: Disk usage > {$KERIO.DISK.HIGH}%'
+        event_name: 'Kerio Connect on {HOST.NAME}: mail store {ITEM.LASTVALUE1}% used (> {$KERIO.DISK.HIGH}%)'
         priority: HIGH
+        tags:
+        - tag: scope
+          value: capacity
         manual_close: 'YES'
         description: 'Mail store disk usage exceeded {$KERIO.DISK.HIGH}% (current: {ITEM.VALUE1}%). Mailboxes will stop accepting messages soon — free space immediately.'
         dependencies:
@@ -177,7 +193,11 @@ zabbix_export:
       - uuid: 5c32830179d94d73828d571569fe4a13
         expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.DISASTER}
         name: 'Kerio Connect: Disk usage > {$KERIO.DISK.DISASTER}%'
+        event_name: 'Kerio Connect on {HOST.NAME}: mail store {ITEM.LASTVALUE1}% used (> {$KERIO.DISK.DISASTER}%) — server stops accepting mail'
         priority: DISASTER
+        tags:
+        - tag: scope
+          value: capacity
         manual_close: 'YES'
         description: 'Mail store disk usage exceeded {$KERIO.DISK.DISASTER}% (current: {ITEM.VALUE1}%). Kerio Connect stops accepting messages at full disk — free space NOW.'
         dependencies:
@@ -201,7 +221,11 @@ zabbix_export:
       - uuid: caf2923264a046328febdf147ed0786c
         expression: last(/Kerio Connect by Zabbix agent/kerio.queue.total)>{$KERIO.QUEUE.WARN}
         name: 'Kerio Connect: High message queue depth'
+        event_name: 'Kerio Connect on {HOST.NAME}: message queue {ITEM.LASTVALUE1} msgs (> {$KERIO.QUEUE.WARN})'
         priority: WARNING
+        tags:
+        - tag: scope
+          value: performance
         manual_close: 'YES'
         description: 'Queue depth exceeded {$KERIO.QUEUE.WARN} messages (current: {ITEM.VALUE1}). May indicate delivery failures or upstream issues.'
         dependencies:
@@ -318,7 +342,11 @@ zabbix_export:
       - uuid: 2f0c9b1e5e844f8a92e178a3b1c4d5a2
         expression: avg(/Kerio Connect by Zabbix agent/kerio.smtp.auth.failures,5m)>{$KERIO.SMTP.AUTH.WARN}
         name: 'Kerio Connect: High SMTP authentication failure rate'
+        event_name: 'Kerio Connect on {HOST.NAME}: SMTP auth-failure rate {ITEM.LASTVALUE1}/s (> {$KERIO.SMTP.AUTH.WARN}/s)'
         priority: WARNING
+        tags:
+        - tag: scope
+          value: security
         manual_close: 'YES'
         description: SMTP auth failure rate over the last 5 minutes exceeded {$KERIO.SMTP.AUTH.WARN}/s. Possible brute-force attack or misconfigured client.
         dependencies:
@@ -534,7 +562,11 @@ zabbix_export:
       - uuid: c4494ce53eaa4d9283a5ba55073019d6
         expression: last(/Kerio Connect by Zabbix agent/kerio.av.infected)>0
         name: 'Kerio Connect: Antivirus infection detected'
+        event_name: 'Kerio Connect on {HOST.NAME}: antivirus detected {ITEM.LASTVALUE1} infected attachment(s)'
         priority: HIGH
+        tags:
+        - tag: scope
+          value: security
         manual_close: 'YES'
         description: One or more infected attachments were detected. Check Kerio Connect antivirus logs.
         dependencies:
@@ -636,7 +668,11 @@ zabbix_export:
       - uuid: d4feb43a01054edca1e86881b91f16f5
         expression: last(/Kerio Connect by Zabbix agent/kerio.license.days)<30
         name: 'Kerio Connect: License expires in less than 30 days'
+        event_name: 'Kerio Connect on {HOST.NAME}: license expires in {ITEM.LASTVALUE1} days'
         priority: WARNING
+        tags:
+        - tag: scope
+          value: availability
         manual_close: 'YES'
         description: 'Renew the Kerio Connect license. Current days remaining: {ITEM.VALUE1}.'
         dependencies:
@@ -685,20 +721,14 @@ zabbix_export:
           value: '{#SERVICE}'
         trigger_prototypes:
         - uuid: 976e5145f8344785a1e405774bcfeca6
-          expression: last(/Kerio Connect by Zabbix agent/kerio.service.status[{#SERVICE}])=0
+          expression: last(/Kerio Connect by Zabbix agent/kerio.service.status[{#SERVICE}])=0 and "{#STARTTYPE}"="Automatic"
           name: 'Kerio Connect: Service {#SERVICE} is not running'
+          event_name: 'Kerio Connect on {HOST.NAME}: service {#SERVICE} (Automatic) is not running'
           priority: HIGH
+          tags:
+          - tag: scope
+            value: availability
           manual_close: 'YES'
-          description: Discovered Kerio service is stopped. If this is intentional, add the service to {$KERIO.SERVICES.EXCLUDE} on the host.
+          description: 'Kerio service with start type Automatic is not running. Manual-start services are not alerted (their status item is still collected). If you want to stop alerting on an Automatic service, set its start type to Manual in Kerio.'
           dependencies:
           - *id001
-      filter:
-        evaltype: AND
-        conditions:
-        - macro: '{#SERVICE}'
-          value: '{$KERIO.SERVICES.EXCLUDE}'
-          operator: NOT_MATCHES_REGEX
-          formulaid: A
-    vendor:
-      name: itforprof.com — Konstantin Tyutyunnik
-      version: 1.0.0

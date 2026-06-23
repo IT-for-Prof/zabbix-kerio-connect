@@ -15,7 +15,7 @@ flowchart LR
     subgraph Z[Zabbix proxy / agent]
         M["Master item<br/>kerio.api.master<br/>delay 1m, timeout 30s"]
         D["24 dependent items<br/>JSONPath + CHANGE_PER_SECOND<br/>+ IN_RANGE guard"]
-        L["LLD: kerio.services.discovery<br/>10 min, EXCLUDE filter"]
+        L["LLD: kerio.services.discovery<br/>10 min, alert Automatic only"]
         SP["service.status[#SERVICE]<br/>prototypes"]
     end
     T["7 triggers<br/>(all depend on master nodata)"]
@@ -160,21 +160,18 @@ In `/etc/zabbix/zabbix_agent2.conf` you **must** set `Timeout=30` (or higher)
 
 Restart the agent and link the template to the host.
 
-## Excluding services
+## Which services alert
 
-`{$KERIO.SERVICES.EXCLUDE}` is a regex matched against discovered service
-names; matching services are not monitored. Default `^$` matches nothing
-(every service is monitored).
+The "service is not running" trigger is created **only for services with start
+type Automatic**. The start type comes from the Kerio API `howToStart` field,
+exposed as the LLD macro `{#STARTTYPE}`; the trigger expression fires only when
+`{#STARTTYPE}="Automatic"`, so Manual-start services keep their trigger but it
+never goes off.
 
-The regex is anchored, so `Secure …` variants (Secure POP3, Secure HTTP, …)
-must be listed separately if you want them excluded too.
-
-Example — host with POP3, HTTP, XMPP, NNTP and Secure NNTP / Secure XMPP all
-configured Manual:
-
-```
-{$KERIO.SERVICES.EXCLUDE}=^(POP3|HTTP|XMPP|NNTP|Secure NNTP|Secure XMPP)$
-```
+Manual-start services are intentionally stopped, so they never alert — but their
+status metric (`kerio.service.status[…]`) is still collected. To stop alerting
+on an Automatic service, set its start type to Manual in Kerio itself; there is
+no hand-maintained exclude list in Zabbix.
 
 ## Installation
 

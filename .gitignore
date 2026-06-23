@@ -49,6 +49,7 @@ secrets.*
 .codex/
 .claude/
 .cursor/
+.serena/
 .mcp.json
 
 # Build / temp

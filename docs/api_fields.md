@@ -124,6 +124,12 @@ Response path: `result.services` (array)
 
 `isRunning` is a **boolean** (`true`/`false`).
 
+`howToStart` is a **string**, observed values `Automatic` / `Manual` (a service's
+start type in Kerio). The service-discovery LLD emits it as `{#STARTTYPE}`
+alongside `{#SERVICE}`. The "service is not running" trigger is gated with
+`… and "{#STARTTYPE}"="Automatic"`, so Manual-start services (intentionally
+stopped) keep a status item but never alert — no per-host exclude list.
+
 ---
 
 ## ProductRegistration.getFullStatus — CONFIRMED WORKING
@@ -233,7 +239,7 @@ All paths assume master item returns:
 | `kerio.greylisting.delayed` | `$.statistics.greylisting.messagesDelayed` | Numeric | | cumulative string |
 | `kerio.antibombing.rejected` | `$.statistics.antibombing.rejectedConnections` | Numeric | | cumulative string |
 | `kerio.uptime.days` | `$.statistics.uptime.days` | Numeric | days | integer |
-| `kerio.service.status[{#SERVICE}]` | `$.services[?(@.name=="{#SERVICE}")].isRunning.first()` | Numeric | | boolean → needs "Boolean to decimal" preprocessing |
+| `kerio.service.status[{#SERVICE}]` | `$.services[?(@.name=="{#SERVICE}")].isRunning.first()` | Numeric | | boolean → needs "Boolean to decimal" preprocessing; LLD also emits `{#STARTTYPE}` (= `howToStart`) used to gate the trigger to Automatic services |
 | `kerio.license.users` | `$.license.users` | Numeric | seats | integer |
 | `kerio.license.expiry` | `$.license.expirations[0].date` | Numeric | unixtime | integer; use unixtime display format |
 | `kerio.license.days` | `$.license.expirations[0].remainingDays` | Numeric | days | integer |

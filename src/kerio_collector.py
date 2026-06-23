@@ -156,7 +156,12 @@ def discover_services(host: str, port: int, username: str, password: str, scheme
     finally:
         client.logout()
 
-    return json.dumps([{"{#SERVICE}": svc["name"]} for svc in services.get("services", [])])
+    return json.dumps(
+        [
+            {"{#SERVICE}": svc["name"], "{#STARTTYPE}": svc.get("howToStart", "")}
+            for svc in services.get("services", [])
+        ]
+    )
 
 
 def _usage() -> str:

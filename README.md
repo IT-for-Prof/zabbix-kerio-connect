@@ -15,7 +15,7 @@ flowchart LR
     subgraph Z[Zabbix proxy / agent]
         M["Master item<br/>kerio.api.master<br/>delay 1m, timeout 30s"]
         D["24 dependent items<br/>JSONPath + CHANGE_PER_SECOND<br/>+ IN_RANGE guard"]
-        L["LLD: kerio.services.discovery<br/>10 min, фильтр EXCLUDE"]
+        L["LLD: kerio.services.discovery<br/>10 min, алерт только Automatic"]
         SP["service.status[#SERVICE]<br/>прототипы"]
     end
     T["7 триггеров<br/>(зависят от nodata мастера)"]
@@ -161,20 +161,18 @@ password = <секрет>
 
 Перезапустите агента и привяжите шаблон к хосту.
 
-## Макрос исключения сервисов
+## Какие сервисы алертят
 
-`{$KERIO.SERVICES.EXCLUDE}` — регулярное выражение, под которое **не**
-дискаверятся сервисы. По умолчанию `^$` (исключений нет).
+Триггер «сервис не запущен» создаётся **только для сервисов с типом запуска
+Automatic**. Тип берётся из поля `howToStart` Kerio API и публикуется в LLD как
+макрос `{#STARTTYPE}`; выражение триггера срабатывает только при
+`{#STARTTYPE}="Automatic"`, поэтому для Manual-сервисов триггер остаётся, но
+никогда не зажигается.
 
-Регулярка якорная, поэтому варианты `Secure …` (Secure POP3, Secure HTTP, …)
-нужно перечислять отдельно, если их тоже не нужно мониторить.
-
-Пример — хост, на котором POP3, HTTP, XMPP, NNTP и Secure NNTP / Secure XMPP
-выставлены в Manual:
-
-```
-{$KERIO.SERVICES.EXCLUDE}=^(POP3|HTTP|XMPP|NNTP|Secure NNTP|Secure XMPP)$
-```
+Сервисы в режиме Manual намеренно остановлены — алерт по ним не создаётся, но
+status-метрика (`kerio.service.status[…]`) продолжает собираться. Чтобы
+перестать получать алерт по Automatic-сервису, переведите его в Manual в самом
+Kerio — ручной список исключений в Zabbix вести не нужно.
 
 ## Установка
 
