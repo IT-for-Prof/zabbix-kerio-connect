@@ -6,7 +6,8 @@ var SENDER = /, Size: \d+, Sender-Host: ([^,]+)(, User: [^,]*)?(?=, SSL: |, Subj
 var WINDOW = 3600; // equals the item delay (tests/test_templates.py): runs neither overlap nor leave gaps
 
 // From, To and Subject are sender-controlled and may imitate the Size/Sender-Host run, so every
-// candidate counts: an injected fake can raise a false alarm but cannot hide the real sender.
+// candidate counts and recipients run up to the last one: an injected fake can widen the window and
+// raise a false alarm, but cannot hide the real sender or the real recipients.
 function unauthRelayHost(line, localDomains) {
     var i = line.indexOf('] Recv: ');
     if (i < 0) return null;
@@ -15,14 +16,14 @@ function unauthRelayHost(line, localDomains) {
     var to = rest.indexOf(', To: ');
     if (to < 0) return null;
     SENDER.lastIndex = 0;
-    var m, first = -1, host = null;
+    var m, last = -1, host = null;
     while ((m = SENDER.exec(rest)) !== null) {
-        if (first < 0 && m.index > to) first = m.index;
+        if (m.index > to) last = m.index;
         if (!m[2] && PRIVATE.test(m[1])) host = m[1];
     }
-    if (host === null || first < 0) return null;
+    if (host === null || last < 0) return null;
     var re = /@([^<>@\s,]+)>/g, d, external = false;
-    var recipients = rest.substring(to, first);
+    var recipients = rest.substring(to, last);
     while ((d = re.exec(recipients)) !== null) {
         if (!localDomains[d[1].toLowerCase()]) external = true;
     }
@@ -53,6 +54,7 @@ return withSession('Zabbix Relay', function () {
     for (var i = 0; i < domains.length; i++) local[String(domains[i].name).toLowerCase()] = true;
     var limit = parseInt(params.lines, 10), total = r[2].totalItems || 0;
     var view = total ? apiCall('Logs.get', { logName: 'mail', fromLine: Math.max(0, total - limit), countLines: limit }).viewport || [] : [];
-    var allow = params.allow ? new RegExp(params.allow) : null;
+    // whole-address match: an unanchored '192.168.1.5' would also exempt .50-.59
+    var allow = params.allow ? new RegExp('^(?:' + params.allow + ')$') : null;
     return JSON.stringify(relayStats(view, r[0].info.currentTime, r[0].info.timezoneOffset, local, allow, total > limit));
 });

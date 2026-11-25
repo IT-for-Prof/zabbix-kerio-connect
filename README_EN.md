@@ -73,8 +73,8 @@ Auditor `Domains.get` returns domain names (field `name`) only; the relay check
 uses them.
 
 Queue items return aggregates only: addresses from `Queue.get` never reach
-Zabbix history. The oldest 500 messages are evaluated; a larger queue fires
-"Outbound delivery failing" anyway.
+Zabbix history. Only the oldest 500 messages are evaluated: if they all go to one
+or two domains, "Outbound delivery failing" stays quiet even while fresh mail piles up behind them.
 
 ## Triggers
 
@@ -170,7 +170,7 @@ Queue and relay thresholds (defaults fit most servers):
 | `{$KERIO.QUEUE.STUCK.DOMAINS}` | `3` | how many domains with stuck messages mean outbound delivery is failing |
 | `{$KERIO.QUEUE.AGE.HIGH}` | `24h` | oldest message age for the Warning |
 | `{$KERIO.LOG.LINES}` | `5000` | how many last `mail` log lines the relay check reads |
-| `{$KERIO.RELAY.UNAUTH.ALLOW}` | empty | regex of private addresses allowed to relay without authentication |
+| `{$KERIO.RELAY.UNAUTH.ALLOW}` | empty | regex of private addresses allowed to relay without authentication (matched against the whole address) |
 
 ### Variant 2 — `Kerio Connect by Zabbix agent`
 

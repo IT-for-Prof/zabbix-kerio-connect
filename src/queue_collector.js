@@ -26,7 +26,7 @@ function queueStats(list, now, offsetMinutes, stuckAge) {
 return withSession('Zabbix Queue', function () {
     var r = batchCall([
         { method: 'Server.getServerTime', params: {} },
-        // shortcut: the oldest 500 entries only (a bigger queue fires the stuck-domains trigger anyway); page through totalItems if a per-message count above 500 is ever needed.
+        // shortcut: the oldest 500 entries only, so stuck_domains is blind when they span fewer domains than the trigger needs; page through totalItems once several Queue.get in one Batch.run is verified live.
         { method: 'Queue.get', params: { query: { start: 0, limit: 500, orderBy: [{ columnName: 'creationTime', direction: 'Asc' }] } } }
     ]);
     return JSON.stringify(queueStats(r[1].list || [], r[0].info.currentTime, r[0].info.timezoneOffset, seconds(params.stuck_age)));

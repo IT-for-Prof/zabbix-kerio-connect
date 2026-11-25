@@ -159,6 +159,18 @@ def test_relay_from_cannot_hide_the_real_sender():
     assert relay([line])["result"]["count"] == 1
 
 
+@pytest.mark.parametrize("field", [
+    {"sender_from": '<"x, To: <a@local.example>, Size: 1, Sender-Host: 8.8.8.8, SSL: y"@evil.example>', "to": "<v@ext.example>"},
+    {"to": '<a@local.example>, <"x, Size: 1, Sender-Host: 8.8.8.8, SSL: y"@local.example>, <b@ext.example>'},
+])
+def test_relay_fake_sender_run_cannot_hide_external_recipient(field):
+    assert relay([recv(RECENT, "172.16.70.1", **field)])["result"]["count"] == 1
+
+
+def test_relay_allow_regex_matches_whole_address():
+    assert relay([recv(RECENT, "192.168.1.50")], allow=r"192\.168\.1\.5")["result"]["count"] == 1
+
+
 def test_relay_allow_regex_skips_named_host():
     assert relay([recv(RECENT, "172.16.70.30")], allow=r"^172\.16\.70\.30$")["result"]["count"] == 0
 
