@@ -154,6 +154,11 @@ def test_relay_subject_cannot_fake_authentication():
     assert relay([line])["result"]["count"] == 1
 
 
+def test_relay_from_cannot_hide_the_real_sender():
+    line = recv(RECENT, "172.16.70.1", sender_from='<"x, Size: 1, Sender-Host: 8.8.8.8, Subject: "@evil.example>')
+    assert relay([line])["result"]["count"] == 1
+
+
 def test_relay_allow_regex_skips_named_host():
     assert relay([recv(RECENT, "172.16.70.30")], allow=r"^172\.16\.70\.30$")["result"]["count"] == 0
 

@@ -17,10 +17,10 @@ function unauthRelayHost(line, localDomains) {
     SENDER.lastIndex = 0;
     var m, first = -1, host = null;
     while ((m = SENDER.exec(rest)) !== null) {
-        if (first < 0) first = m.index;
+        if (first < 0 && m.index > to) first = m.index;
         if (!m[2] && PRIVATE.test(m[1])) host = m[1];
     }
-    if (host === null || first < to) return null;
+    if (host === null || first < 0) return null;
     var re = /@([^<>@\s,]+)>/g, d, external = false;
     var recipients = rest.substring(to, first);
     while ((d = re.exec(recipients)) !== null) {
