@@ -12,24 +12,25 @@ JSON-RPC Admin API.
 ```mermaid
 flowchart LR
     K[Kerio Connect<br/>JSON-RPC API<br/>:4040]
-    subgraph Z[Zabbix proxy / agent]
-        M["Master item<br/>kerio.api.master<br/>delay 1m, timeout 30s"]
-        D["24 dependent items<br/>JSONPath + CHANGE_PER_SECOND<br/>+ IN_RANGE guard"]
-        L["LLD: kerio.services.discovery<br/>10 min, alert Automatic only"]
-        SP["service.status[#SERVICE]<br/>prototypes"]
+    subgraph Z[Zabbix server / proxy]
+        M["kerio.api.master<br/>1m: statistics, services,<br/>license, version"]
+        Q["kerio.queue.raw<br/>1m: queue age"]
+        R["kerio.relay.unauth<br/>1h: mail log,<br/>relay group"]
+        L["LLD: kerio.services.discovery"]
+        D["dependent items<br/>JSONPath"]
     end
-    T["7 triggers<br/>(all depend on master nodata)"]
-
-    K -- "Session.login → 4 calls → logout" --> M
-    M -- "JSON blob (≈8 KB)" --> D
-    M -- "JSON blob" --> L
-    L --> SP
-    D --> T
-    SP --> T
+    K -- "login → Batch.run → logout" --> M
+    K --> Q
+    K --> R
+    K --> L
+    M --> D
+    Q --> D
+    R --> D
 ```
 
-One authenticated session → four API calls → one JSON blob → 24 dependent
-items via JSONPath. LLD creates a status item per discovered service.
+Each Script item opens a session, requests its methods in one `Batch.run` and
+closes the session. Dependent items extract values via JSONPath; LLD creates a
+status item per discovered service.
 
 ---
 
@@ -50,6 +51,7 @@ more Script items: the queue (every minute) and the relay check (hourly).
 | Oldest queued message age, s (`by Script` only) | `kerio.queue.oldest.age` |
 | Messages with a temporary `4.x.x` status older than `{$KERIO.QUEUE.STUCK.AGE}` and their domain count (`by Script` only) | `kerio.queue.stuck`, `kerio.queue.stuck.domains` |
 | Unauthenticated SMTP from a private address to external recipients per hour (`by Script` only) | `kerio.relay.unauth.count`, `kerio.relay.unauth.truncated` |
+| Relay restricted or open, entries of the relay IP group (`by Script` only) | `kerio.relay.restricted`, `kerio.relay.group.entries` |
 | Server uptime (days) | `kerio.uptime.days` |
 | Connections (SMTP/IMAP/POP3/LDAP/Web/XMPP) | `kerio.{smtp,imap,pop3,ldap,web,xmpp}.connections` |
 | SMTP messages in/out | `kerio.smtp.messages.{in,out}` |
@@ -97,12 +99,20 @@ or two domains, "Outbound delivery failing" stays quiet even while fresh mail pi
 - 🟧 **Unauthenticated relay from a private address** (`by Script` only) — in the
   last 24h the `mail` log has a `Recv` line with `Service: SMTP`, no `User:`, a
   private IPv4 `Sender-Host` and an external recipient (not in `Domains.get`).
-  A sign of NAT on the path to Kerio: the "Local clients" group allows relay
+  This means NAT sits on the path to Kerio. The relay group from Relay Control
+  (often "Local clients") allows relay
   without authentication, so any Internet client behind such NAT can relay.
   Specific internal hosts allowed to do this go into the regex
   `{$KERIO.RELAY.UNAUTH.ALLOW}`; never put a NAT address there. Limitation: if
   the NAT address has a PTR record, Kerio logs the name instead of the address
   and the check does not see it.
+- 🔴 **Open relay** (`by Script` only) — Kerio Relay Control does not restrict
+  relaying (`Smtp.get` → `relayControl.isRestricted` = false): the server relays
+  mail for anyone.
+- ⚠️ **Relay group changed** (`by Script` only) — the IP group Kerio lets relay
+  without authentication changed (`kerio.relay.group.entries`, value repeated
+  once a day). Check every new public address and the firewall rules that mirror
+  this group.
 - ⚠️ **Relay check misses part of the hour** — the `{$KERIO.LOG.LINES}`-line log
   tail is shorter than one hour; raise the macro.
 - ⚠️ **Queue / Relay check data collection failed** — no data from the queue
@@ -125,6 +135,8 @@ flowchart LR
     R --> QS["🟧 Outbound delivery failing"]
     R --> QA["⚠️ Message queued > 24h"]
     R --> RL["🟧 Unauthenticated relay"]
+    R --> OR["🔴 Open relay"]
+    R --> RG["⚠️ Relay group changed"]
     R --> A["⚠️ SMTP auth failures"]
     R --> L["⚠️ License < 30 days"]
     R --> V["🔴 Antivirus infection"]

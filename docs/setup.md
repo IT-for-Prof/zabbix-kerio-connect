@@ -3,14 +3,14 @@
 ## Script Template
 
 Import `template/kerio_connect_script/template_app_kerio_connect_script.yaml`
-into Zabbix 7 and link it to the Kerio Connect host.
+into Zabbix 7.0 or newer and link it to the Kerio Connect host.
 
 Set host macros:
 
 ```text
 {$KERIO.API.HOST}=<Kerio host or IP>
 {$KERIO.API.PORT}=4040
-{$KERIO.API.USERNAME}=<Auditor user>
+{$KERIO.API.USERNAME}=<user with the Auditor role>
 {$KERIO.API.PASSWORD}=<secret password>
 ```
 

@@ -12,24 +12,25 @@ JSON-RPC Admin API.
 ```mermaid
 flowchart LR
     K[Kerio Connect<br/>JSON-RPC API<br/>:4040]
-    subgraph Z[Zabbix proxy / agent]
-        M["Master item<br/>kerio.api.master<br/>delay 1m, timeout 30s"]
-        D["24 dependent items<br/>JSONPath + CHANGE_PER_SECOND<br/>+ IN_RANGE guard"]
-        L["LLD: kerio.services.discovery<br/>10 min, алерт только Automatic"]
-        SP["service.status[#SERVICE]<br/>прототипы"]
+    subgraph Z[Zabbix server / proxy]
+        M["kerio.api.master<br/>1m: статистика, сервисы,<br/>лицензия, версия"]
+        Q["kerio.queue.raw<br/>1m: возраст очереди"]
+        R["kerio.relay.unauth<br/>1h: журнал mail,<br/>группа релея"]
+        L["LLD: kerio.services.discovery"]
+        D["зависимые айтемы<br/>JSONPath"]
     end
-    T["7 триггеров<br/>(зависят от nodata мастера)"]
-
-    K -- "Session.login → 4 calls → logout" --> M
-    M -- "JSON blob (≈8 KB)" --> D
-    M -- "JSON blob" --> L
-    L --> SP
-    D --> T
-    SP --> T
+    K -- "вход → Batch.run → выход" --> M
+    K --> Q
+    K --> R
+    K --> L
+    M --> D
+    Q --> D
+    R --> D
 ```
 
-Один авторизованный сеанс → четыре вызова API → один JSON-объект → 24 зависимых
-айтема через JSONPath. LLD создаёт айтем статуса для каждого сервиса.
+Каждый Script-айтем открывает сеанс, запрашивает свои методы одним `Batch.run`
+и закрывает сеанс. Зависимые айтемы берут значения через JSONPath, LLD создаёт
+айтем статуса для каждого сервиса.
 
 ---
 
@@ -50,6 +51,7 @@ Script-айтема: очередь (раз в минуту) и проверка
 | Возраст самого старого письма в очереди, с (только `by Script`) | `kerio.queue.oldest.age` |
 | Письма с временной ошибкой `4.x.x` старше `{$KERIO.QUEUE.STUCK.AGE}` и число их доменов (только `by Script`) | `kerio.queue.stuck`, `kerio.queue.stuck.domains` |
 | Неавторизованный SMTP с приватного адреса наружу за час (только `by Script`) | `kerio.relay.unauth.count`, `kerio.relay.unauth.truncated` |
+| Релей ограничен или открыт, состав группы релея (только `by Script`) | `kerio.relay.restricted`, `kerio.relay.group.entries` |
 | Время работы сервера | `kerio.uptime.days` |
 | Соединения SMTP/IMAP/POP3/LDAP/Web/XMPP | `kerio.{smtp,imap,pop3,ldap,web,xmpp}.connections` |
 | Сообщения SMTP вход/исход | `kerio.smtp.messages.{in,out}` |
@@ -99,12 +101,19 @@ CPU, память и swap **намеренно не включены**: `SystemH
 - 🟧 **Unauthenticated relay from a private address** (только `by Script`) — за
   24h в журнале `mail` есть `Recv` с `Service: SMTP` без `User:`, где
   `Sender-Host` — приватный IPv4, а среди получателей есть внешний домен
-  (не из `Domains.get`). Признак NAT на пути к Kerio: группа «Local clients»
-  разрешает релей без авторизации, и через такой NAT релеить может любой
+  (не из `Domains.get`). Признак NAT на пути к Kerio: группа релея из Relay Control
+  (на многих серверах — «Local clients») разрешает релей без авторизации, и через такой NAT релеить может любой
   клиент из интернета. Конкретные внутренние хосты, которым такой релей
   разрешён, задаются regex `{$KERIO.RELAY.UNAUTH.ALLOW}`; адрес NAT туда не
   вносится. Ограничение: если у адреса NAT есть PTR-запись, Kerio пишет имя
   вместо адреса, и проверка его не видит.
+- 🔴 **Open relay** (только `by Script`) — в Relay Control Kerio релей не
+  ограничен (`Smtp.get` → `relayControl.isRestricted` = false): сервер пересылает
+  почту для всех.
+- ⚠️ **Relay group changed** (только `by Script`) — изменился состав группы, которой
+  Kerio разрешает релей без авторизации (`kerio.relay.group.entries`, повтор
+  значения раз в сутки). Проверьте каждый новый публичный адрес и правила
+  межсетевого экрана, которые повторяют эту группу.
 - ⚠️ **Relay check misses part of the hour** — хвост журнала
   `{$KERIO.LOG.LINES}` строк короче часа; поднимите макрос.
 - ⚠️ **Queue / Relay check data collection failed** — у Script-айтема очереди
@@ -127,6 +136,8 @@ flowchart LR
     R --> QS["🟧 Outbound delivery failing"]
     R --> QA["⚠️ Message queued > 24h"]
     R --> RL["🟧 Unauthenticated relay"]
+    R --> OR["🔴 Open relay"]
+    R --> RG["⚠️ Relay group changed"]
     R --> A["⚠️ SMTP auth failures"]
     R --> L["⚠️ License < 30 days"]
     R --> V["🔴 Antivirus infection"]
