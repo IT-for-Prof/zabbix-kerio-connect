@@ -1,60 +1,14 @@
-// master_collector.js - Zabbix Script item (Duktape engine)
-var params = JSON.parse(value);
-var baseUrl = params.scheme + '://' + params.host + ':' + params.port + '/admin/api/jsonrpc/';
-var reqId = 0;
-var token = null;
-var cookie = null;
-
-function apiCall(method, callParams) {
-    reqId++;
-    var body = { jsonrpc: '2.0', id: reqId, method: method };
-    if (callParams) body.params = callParams;
-    if (token) body.token = token;
-
-    var http = new HttpRequest();
-    http.addHeader('Content-Type: application/json');
-    http.addHeader('Accept: application/json');
-    if (cookie) http.addHeader('Cookie: ' + cookie);
-    if (token) http.addHeader('X-Token: ' + token);
-
-    var resp = http.post(baseUrl, JSON.stringify(body));
-    var status = http.getStatus();
-    if (status < 200 || status >= 300) throw 'HTTP ' + status + ' on ' + method;
-
-    var result = JSON.parse(resp);
-    if (result.error) throw method + ' error: ' + result.error.message;
-    if (method === 'Session.login') {
-        var headers = http.getHeaders ? http.getHeaders() : {};
-        var sc = headers['set-cookie'] || headers['Set-Cookie'] || '';
-        if (sc) cookie = sc.split(';')[0];
-    }
-    return result.result;
-}
-
-try {
-    var loginResult = apiCall('Session.login', {
-        userName: params.username,
-        password: params.password,
-        application: { name: 'Zabbix Monitoring', vendor: 'Zabbix', version: '7.0' }
-    });
-    token = loginResult.token;
-
-    var statsResp = apiCall('Statistics.get');
-    var svcsResp = apiCall('Services.get');
-    var licResp = apiCall('ProductRegistration.getFullStatus');
-    var serverResp = apiCall('Server.getVersion');
-
-    try { apiCall('Session.logout'); } catch (e) {}
-    token = null;
-    cookie = null;
-
+return withSession('Zabbix Monitoring', function () {
+    var r = batchCall([
+        { method: 'Statistics.get', params: {} },
+        { method: 'Services.get', params: {} },
+        { method: 'ProductRegistration.getFullStatus', params: {} },
+        { method: 'Server.getVersion', params: {} }
+    ]);
     return JSON.stringify({
-        statistics: statsResp.statistics || {},
-        services: svcsResp.services || [],
-        license: licResp.status || {},
-        server: serverResp || {}
+        statistics: r[0].statistics || {},
+        services: r[1].services || [],
+        license: r[2].status || {},
+        server: r[3] || {}
     });
-} catch (e) {
-    try { apiCall('Session.logout'); } catch (x) {}
-    throw e;
-}
+});

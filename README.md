@@ -35,16 +35,21 @@ flowchart LR
 
 ## Что собирается
 
-В одном опросе мастер-айтем выполняет 4 вызова Kerio Admin API
-(`Statistics.get`, `Services.get`, `ProductRegistration.getFullStatus`,
-`Server.getVersion`) и возвращает JSON-объект, из которого 24 зависимых айтема
-извлекают значения через JSONPath. Одно правило LLD создаёт айтемы статуса
-для каждого обнаруженного сервиса.
+Мастер-айтем раз в минуту запрашивает 4 метода Kerio Admin API одним
+`Batch.run` (`Statistics.get`, `Services.get`, `ProductRegistration.getFullStatus`,
+`Server.getVersion`) и отдаёт JSON, из которого зависимые айтемы берут значения
+через JSONPath. Kerio закрывает соединение после каждого ответа, поэтому один
+опрос — это три HTTP-запроса: вход, batch, выход. Одно правило LLD создаёт айтемы
+статуса для каждого обнаруженного сервиса. В шаблоне `by Script` есть ещё два
+Script-айтема: очередь (раз в минуту) и проверка релея (раз в час).
 
 | Метрика | Айтем |
 |---|---|
 | Объём хранилища (всего/занято/процент) | `kerio.disk.total`, `kerio.disk.used`, `kerio.disk.pct` |
 | Очередь сообщений | `kerio.queue.total` |
+| Возраст самого старого письма в очереди, с (только `by Script`) | `kerio.queue.oldest.age` |
+| Письма с временной ошибкой `4.x.x` старше `{$KERIO.QUEUE.STUCK.AGE}` и число их доменов (только `by Script`) | `kerio.queue.stuck`, `kerio.queue.stuck.domains` |
+| Неавторизованный SMTP с приватного адреса наружу за час (только `by Script`) | `kerio.relay.unauth.count`, `kerio.relay.unauth.truncated` |
 | Время работы сервера | `kerio.uptime.days` |
 | Соединения SMTP/IMAP/POP3/LDAP/Web/XMPP | `kerio.{smtp,imap,pop3,ldap,web,xmpp}.connections` |
 | Сообщения SMTP вход/исход | `kerio.smtp.messages.{in,out}` |
@@ -61,21 +66,49 @@ flowchart LR
 рестарта Kerio: счётчики обнуляются, и без защиты получится отрицательная
 дельта).
 
-CPU, память, swap и per-domain метрики **намеренно не включены** — API-методы
-`SystemHealth.get` и `Domains.get` недоступны под ролью **Auditor**. Для
-системных метрик подключайте параллельно стандартный OS-шаблон Zabbix.
+CPU, память и swap **намеренно не включены**: `SystemHealth.get` недоступен под
+ролью **Auditor**. Для системных метрик и места на томе хранилища подключайте
+параллельно стандартный OS-шаблон Zabbix. Из `Domains.get` под Auditor читаются
+только имена доменов (поле `name`) — их использует проверка релея.
+
+Айтемы очереди отдают только агрегаты: адреса из `Queue.get` в историю Zabbix
+не попадают. Учитываются 500 самых старых писем: если все они идут в один-два
+домена, «Outbound delivery failing» не сработает, даже когда за ними копится свежая почта.
 
 ## Триггеры
 
 - ⚪ **API data collection failed** — мастер-айтем не возвращал данных 5 мин.
-- ⚠️ **Disk usage > {$KERIO.DISK.WARN}%** — по умолчанию 80 %, Warning.
-- 🟧 **Disk usage > {$KERIO.DISK.AVG}%** — по умолчанию 90 %, Average.
-- 🔴 **Disk usage > {$KERIO.DISK.HIGH}%** — по умолчанию 95 %, High.
+- 🔴 **Disk usage > {$KERIO.DISK.HIGH}%** — по умолчанию 95 %, High; горит
+  до `{$KERIO.DISK.DISASTER}` включительно.
 - 💀 **Disk usage > {$KERIO.DISK.DISASTER}%** — по умолчанию 99 %, Disaster;
-  при этой отметке Kerio вот-вот перестанет принимать почту. Каждый
-  следующий уровень подавляет все нижние, поэтому в проблемах виден только
-  один — самой высокой важности.
+  при этой отметке Kerio вот-вот перестанет принимать почту. Ступени не
+  перекрываются: одно состояние — одна проблема. Пороги 80/90 % даёт
+  OS-шаблон (триггеры файловой системы на томе хранилища), в шаблоне Kerio
+  их нет, чтобы не дублировать.
 - ⚠️ **High message queue depth** — очередь больше `{$KERIO.QUEUE.WARN}`.
+- 🟧 **Outbound delivery failing** (только `by Script`) — письма с временной
+  ошибкой `4.x.x` старше `{$KERIO.QUEUE.STUCK.AGE}` (1h) ждут доставки в
+  `{$KERIO.QUEUE.STUCK.DOMAINS}` (3) и более доменов. Один мёртвый получатель
+  этот триггер не поднимает, сломанный путь отправки (релей, NAT, DNS, порт 25)
+  поднимает.
+- ⚠️ **Message queued longer than {$KERIO.QUEUE.AGE.HIGH}** (только `by Script`)
+  — самое старое письмо ждёт дольше 24h. Обычно это мёртвый сервер получателя;
+  проблема закрывается сама, когда Kerio вернёт письмо отправителю
+  (`bounceInterval` в `Smtp.get`, по умолчанию 3 сут). Исключений по
+  получателям нет.
+- 🟧 **Unauthenticated relay from a private address** (только `by Script`) — за
+  24h в журнале `mail` есть `Recv` с `Service: SMTP` без `User:`, где
+  `Sender-Host` — приватный IPv4, а среди получателей есть внешний домен
+  (не из `Domains.get`). Признак NAT на пути к Kerio: группа «Local clients»
+  разрешает релей без авторизации, и через такой NAT релеить может любой
+  клиент из интернета. Конкретные внутренние хосты, которым такой релей
+  разрешён, задаются regex `{$KERIO.RELAY.UNAUTH.ALLOW}`; адрес NAT туда не
+  вносится. Ограничение: если у адреса NAT есть PTR-запись, Kerio пишет имя
+  вместо адреса, и проверка его не видит.
+- ⚠️ **Relay check misses part of the hour** — хвост журнала
+  `{$KERIO.LOG.LINES}` строк короче часа; поднимите макрос.
+- ⚠️ **Queue / Relay check data collection failed** — у Script-айтема очереди
+  нет данных 5 мин, у проверки релея — 3 ч.
 - ⚠️ **High SMTP authentication failure rate** — частота ошибок
   аутентификации в среднем за 5 мин выше `{$KERIO.SMTP.AUTH.WARN}` в секунду.
 - 🔴 **Antivirus infection detected** — KAV обнаружил вредонос.
@@ -83,18 +116,17 @@ CPU, память, swap и per-domain метрики **намеренно не �
 - 🔴 **Service `{#SERVICE}` is not running** — обнаруженный сервис остановлен.
 
 Все триггеры, кроме мастер-«no data», **зависят** от триггера «API data
-collection failed». При пропадании API не сработает 16 ложных алертов — только
-один корневой.
+collection failed». При пропадании API срабатывает один корневой алерт.
 
 ```mermaid
 flowchart LR
     R["⚪ API data collection failed<br/>(nodata, 5m)"]
-    R --> D1["⚠️ Disk > WARN% (80)"]
-    R --> D2["🟧 Disk > AVG% (90)"]
-    R --> D3["🔴 Disk > HIGH% (95)"]
+    R --> D3["🔴 Disk > HIGH% (95..99)"]
     R --> D4["💀 Disk > DISASTER% (99)"]
-    D4 --> D3 --> D2 --> D1
     R --> Q["⚠️ High queue depth"]
+    R --> QS["🟧 Outbound delivery failing"]
+    R --> QA["⚠️ Message queued > 24h"]
+    R --> RL["🟧 Unauthenticated relay"]
     R --> A["⚠️ SMTP auth failures"]
     R --> L["⚠️ License < 30 days"]
     R --> V["🔴 Antivirus infection"]
@@ -131,6 +163,16 @@ Zabbix server или proxy сам ходит в Kerio API. Никаких аге
 | `{$KERIO.API.SCHEME}` | `https` |
 | `{$KERIO.API.USERNAME}` | служебный пользователь (роль Auditor достаточна) |
 | `{$KERIO.API.PASSWORD}` | пароль (Secret macro) |
+
+Пороги очереди и релея (значения по умолчанию подходят большинству):
+
+| Макрос | По умолчанию | Смысл |
+|---|---|---|
+| `{$KERIO.QUEUE.STUCK.AGE}` | `1h` | возраст, после которого письмо `4.x.x` считается застрявшим |
+| `{$KERIO.QUEUE.STUCK.DOMAINS}` | `3` | сколько доменов с застрявшими письмами означает отказ отправки |
+| `{$KERIO.QUEUE.AGE.HIGH}` | `24h` | возраст самого старого письма для Warning |
+| `{$KERIO.LOG.LINES}` | `5000` | сколько последних строк журнала `mail` читает проверка релея |
+| `{$KERIO.RELAY.UNAUTH.ALLOW}` | пусто | regex приватных адресов, которым разрешён релей без авторизации (сверяется с адресом целиком) |
 
 ### Вариант 2 — `Kerio Connect by Zabbix agent`
 
@@ -188,14 +230,12 @@ Kerio — ручной список исключений в Zabbix вести н
 ## Проверено на
 
 Kerio Connect 10.0.8.9228 (Windows), роль API-пользователя Auditor,
-Zabbix 7.0, опрос через Zabbix proxy.
+Zabbix 7.0 и 8.0, опрос с Zabbix server и через Zabbix proxy.
 
 ## Разработка
 
 ```bash
-pytest tests/ -v --ignore=tests/test_deployment.py    # 60 юнит-тестов
-node --check src/master_collector.js
-node --check src/lld_services.js
+pytest tests/ -v --ignore=tests/test_deployment.py    # юнит-тесты; JS коллекторов — в node
 python3 tools/sync_template_js.py --check             # JS ↔ YAML параллель
 ```
 

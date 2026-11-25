@@ -9,8 +9,6 @@ the JSON-RPC Admin API.
 pytest tests/ -v --ignore=tests/test_deployment.py
 pytest tests/test_deployment.py -m live -v
 python3 tests/test_live_api.py <kerio-host> 4040 <user> <password>
-node --check src/master_collector.js
-node --check src/lld_services.js
 python3 tools/generate_uuids.py template/kerio_connect_script/template_app_kerio_connect_script.yaml
 ```
 
@@ -21,8 +19,10 @@ python3 tools/generate_uuids.py template/kerio_connect_script/template_app_kerio
 then logs out. Its JSON output shape is the contract used by template JSONPath
 preprocessing.
 
-`src/master_collector.js` is the Zabbix Script item equivalent for Duktape. It
-uses Zabbix `HttpRequest`, not browser or Node APIs.
+`src/kerio_api.js` is the shared Duktape client; `tools/sync_template_js.py` prepends it to each
+collector (`master_collector.js`, `queue_collector.js`, `relay_collector.js`, `lld_services.js`)
+and embeds the result in the Script template. They use Zabbix `HttpRequest`, not browser or Node
+APIs, and must stay ES5; `tests/test_collector_js.py` runs them in node with a stub.
 
 `docs/api_fields.md` is the source of truth for live Kerio field names. Update
 fixtures and JSONPath expressions from that document before changing collector

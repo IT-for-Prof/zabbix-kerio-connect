@@ -10,6 +10,10 @@ AGENT_TEMPLATE = Path("template/kerio_connect_agent/template_app_kerio_connect_a
 ALL_TEMPLATES = [SCRIPT_TEMPLATE, AGENT_TEMPLATE]
 PROJECT_DESCRIPTION = "Zabbix 7 templates for monitoring Kerio Connect via JSON-RPC Admin API"
 PROJECT_URL = "https://github.com/IT-for-Prof/zabbix-kerio-connect"
+SCRIPT_ONLY_KEYS = {
+    "kerio.queue.raw", "kerio.queue.oldest.age", "kerio.queue.stuck", "kerio.queue.stuck.domains",
+    "kerio.relay.unauth", "kerio.relay.unauth.count", "kerio.relay.unauth.truncated",
+}
 
 
 def load_template(path: Path) -> dict:
@@ -40,7 +44,10 @@ def test_agent_template_tags_match_script_template():
 
     script_items = {item["key"]: item for item in script.get("items", [])}
     agent_items = {item["key"]: item for item in agent.get("items", [])}
+    assert set(script_items) - set(agent_items) == SCRIPT_ONLY_KEYS
     for key, script_item in script_items.items():
+        if key in SCRIPT_ONLY_KEYS:
+            continue
         assert agent_items[key].get("tags", []) == script_item.get("tags", [])
 
     script_rules = {rule["key"]: rule for rule in script.get("discovery_rules", [])}
@@ -124,7 +131,7 @@ def test_agent_template_does_not_declare_credential_macros():
 def test_threshold_macros_present(path):
     template = load_template(path)["zabbix_export"]["templates"][0]
     macro_names = {macro["macro"] for macro in template.get("macros", [])}
-    for required in ("{$KERIO.QUEUE.WARN}", "{$KERIO.DISK.WARN}", "{$KERIO.SMTP.AUTH.WARN}"):
+    for required in ("{$KERIO.QUEUE.WARN}", "{$KERIO.DISK.HIGH}", "{$KERIO.DISK.DISASTER}", "{$KERIO.SMTP.AUTH.WARN}"):
         assert required in macro_names, f"{path.name} missing {required}"
 
 
@@ -134,7 +141,7 @@ def test_templates_do_not_use_unsupported_zabbix_js_headers_api(path):
 
 
 def test_source_js_does_not_use_unsupported_zabbix_headers_api():
-    for path in (Path("src/master_collector.js"), Path("src/lld_services.js")):
+    for path in Path("src").glob("*.js"):
         assert "getHeader(" not in path.read_text()
 
 
@@ -235,3 +242,42 @@ def test_expected_jsonpath_mappings(path):
     by_key = {item["key"]: item for item in template["items"]}
     for key, jsonpath in expected.items():
         assert by_key[key]["preprocessing"][0]["parameters"] == [jsonpath]
+
+
+def triggers(path):
+    for item in load_template(path)["zabbix_export"]["templates"][0]["items"]:
+        for trigger in item.get("triggers", []):
+            yield item, trigger
+
+
+@pytest.mark.parametrize("path", ALL_TEMPLATES)
+def test_event_names_do_not_repeat_the_unit(path):
+    # {ITEM.LASTVALUE} already carries the item unit: "91 %%" otherwise.
+    for _, trigger in triggers(path):
+        assert not re.search(r"\{ITEM\.(LAST)?VALUE\d*\}%", trigger.get("event_name", "") + trigger.get("description", ""))
+
+
+@pytest.mark.parametrize("path", ALL_TEMPLATES)
+def test_disk_triggers_one_problem_per_state(path):
+    # 80/90 % belong to the OS template file system triggers; 95 % has an upper bound instead of a
+    # dependency, because a dependency never closes a problem that opened earlier.
+    disk = [t for item, t in triggers(path) if item["key"] == "kerio.disk.pct"]
+    assert [t["priority"] for t in disk] == ["HIGH", "DISASTER"]
+    high, disaster = disk
+    assert "<={$KERIO.DISK.DISASTER}" in high["expression"]
+    assert high["recovery_mode"] == "RECOVERY_EXPRESSION"
+    for t in disk:
+        assert [d["name"] for d in t["dependencies"]] == ["Kerio Connect: API data collection failed"]
+
+
+def test_relay_check_delay_matches_its_window():
+    items = load_template(SCRIPT_TEMPLATE)["zabbix_export"]["templates"][0]["items"]
+    assert next(i for i in items if i["key"] == "kerio.relay.unauth")["delay"] == "1h"
+    assert "var WINDOW = 3600;" in Path("src/relay_collector.js").read_text()
+
+
+def test_every_script_item_reports_lost_collection():
+    template = load_template(SCRIPT_TEMPLATE)["zabbix_export"]["templates"][0]
+    for item in template["items"]:
+        if item["type"] == "SCRIPT":
+            assert any(t["expression"].startswith("nodata(") for t in item.get("triggers", [])), item["key"]

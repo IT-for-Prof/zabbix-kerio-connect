@@ -194,14 +194,63 @@ Response path: `result`
 
 ---
 
+## Methods added in 1.1.0 — verified 2026-11-25 under Auditor (Kerio 10.0.8, three servers)
+
+### Batch.run
+```json
+{"method": "Batch.run", "params": {"commandList": [{"method": "Server.getVersion", "params": {}}, {"method": "Queue.get", "params": {...}}]}}
+```
+`result` is an array in command order; each element is `{"result": ...}` or `{"error": {...}}`.
+Kerio answers every request with `Connection: Close`, so batching saves a full connection setup per method.
+
+### Server.getServerTime
+`result.info = {"timezoneOffset": 180, "startTime": <unix>, "currentTime": <unix>}`.
+Server local time = UTC + `timezoneOffset` minutes. Queue and log timestamps are server local time without a zone.
+
+### Queue.get
+```json
+{"method": "Queue.get", "params": {"query": {"start": 0, "limit": 500, "orderBy": [{"columnName": "creationTime", "direction": "Asc"}]}}}
+```
+`result = {"list": [...], "totalItems": N, "volume": {...}}`, entry:
+`{"id", "creationTime": "YYYY-MM-DD HH:MM", "nextTry": "YYYY-MM-DD HH:MM", "messageSize", "from", "to", "status": "4.4.1 Cannot connect to host", "authSender", "senderIp"}`.
+Entries carry customer addresses: the template returns aggregates only.
+
+### Logs.get
+```json
+{"method": "Logs.get", "params": {"logName": "mail", "fromLine": 0, "countLines": 1}}
+```
+`result = {"viewport": [{"content": "[25/Nov/2026 21:51:04] Recv: ...", "highlight": ""}], "totalItems": N}`.
+The window starts at `fromLine` and goes forward: the tail is `fromLine = totalItems - count`.
+`Recv` fields in order: `Queue-ID, Service, From, To, Size, Sender-Host, [User], [SSL], [Subject], [Msg-Id]`;
+`User` only for authenticated sessions; `Sender-Host` is the PTR name or the IP when there is none.
+`From`, `To` and `Subject` are sender-controlled.
+
+### Domains.get (names)
+```json
+{"method": "Domains.get", "params": {"query": {"fields": ["name"], "start": 0, "limit": 1000}}}
+```
+`result.list = [{"name": "example.com"}, ...]`.
+
+### Smtp.get
+`retryInterval`, `bounceInterval`, `warningInterval` as `{"value": 3, "units": "Days"}`; also `relayControl`,
+`verifyClientRDnsEntry`, `blockUnknownDns`.
+
+### IpAddressGroups.get
+```json
+{"method": "IpAddressGroups.get", "params": {"query": {"start": 0, "limit": 1000}}}
+```
+`result.list` entries: `groupName`, `type` (`Host` / `Network`), `enabled`, `host`, `addr1`, `addr2`, `description`.
+
+---
+
 ## NOT AVAILABLE with Auditor role
 
 | Method | Error | Reason |
 |--------|-------|--------|
 | `SystemHealth.get` | `-32602 Invalid params` | Always fails regardless of params. Likely requires Admin role or is not implemented in this Kerio Connect version. CPU/memory/swap NOT available via API. |
 | `ProductRegistration.get` | `-32602 Invalid params` | Wrong method name. Use `ProductRegistration.getFullStatus` instead — that works with Auditor role. |
-| `Domains.get` | `1000 internal database error` | Requires Admin role. Per-domain storage NOT available with Auditor. |
-| `MessageQueue.get` / `Queue.getMessages` / `Queue.get` | Timeout | These methods hang. Queue depth is available in `Statistics.get` → `storedInQueue.count`. |
+| `Domains.get` (storage fields) | `1000 internal database error` | Per-domain storage NOT available with Auditor. `Domains.get` with `fields: ["name"]` works (see below). |
+| `MessageQueue.get` / `Queue.getMessages` | Timeout | These methods hang. `Queue.get` works (see below); the earlier timeout was a slow server, not the role. |
 
 ---
 
@@ -223,6 +272,9 @@ All paths assume master item returns:
 | `kerio.disk.total` | `$.statistics.storage.total.value` | Numeric | MB | integer |
 | `kerio.disk.pct` | `$.statistics.storage.percentage` | Numeric | % | string → needs `Matches regex (\d+)` or numeric conversion |
 | `kerio.queue.total` | `$.statistics.storedInQueue.count` | Numeric | messages | string |
+| `kerio.queue.oldest.age` | `$.oldest_age` of `kerio.queue.raw` | Numeric | s | computed in JS |
+| `kerio.queue.stuck` / `kerio.queue.stuck.domains` | `$.stuck` / `$.stuck_domains` of `kerio.queue.raw` | Numeric | | computed in JS |
+| `kerio.relay.unauth.count` / `.truncated` | `$.count` / `$.truncated` of `kerio.relay.unauth` | Numeric | | computed in JS |
 | `kerio.smtp.messages.in` | `$.statistics.received.count` | Numeric | messages | cumulative string |
 | `kerio.smtp.messages.out` | `$.statistics.transmitted.count` | Numeric | messages | cumulative string |
 | `kerio.smtp.auth.failures` | `$.statistics.smtpServer.authenticationFailures` | Numeric | | cumulative string |
