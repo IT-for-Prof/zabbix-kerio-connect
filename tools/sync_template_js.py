@@ -3,8 +3,8 @@
 Sync src/*.js into the Zabbix template YAML `params:` fields.
 
 Zabbix executes the JS embedded in the YAML, not the standalone .js files.
-This tool rewrites the two `params:` fields in the Script template (the master
-item and the LLD rule) from `src/master_collector.js` and `src/lld_services.js`.
+This tool rewrites every Script `params:` field in the Script template from
+`src/kerio_api.js` (shared client) followed by the item's own collector file.
 
 We parse the YAML, set the field, then re-serialise as PyYAML block-scalar
 style so the diff stays readable.
@@ -19,8 +19,14 @@ from pathlib import Path
 import yaml
 
 SCRIPT_TEMPLATE = Path("template/kerio_connect_script/template_app_kerio_connect_script.yaml")
-MASTER_JS = Path("src/master_collector.js")
-LLD_JS = Path("src/lld_services.js")
+COMMON_JS = Path("src/kerio_api.js")
+# Script item / LLD rule key -> its collector.
+SCRIPTS = {
+    "kerio.api.master": Path("src/master_collector.js"),
+    "kerio.queue.raw": Path("src/queue_collector.js"),
+    "kerio.relay.unauth": Path("src/relay_collector.js"),
+    "kerio.services.discovery": Path("src/lld_services.js"),
+}
 
 
 class _LiteralStr(str):
@@ -38,23 +44,21 @@ def _normalize(s: str) -> str:
     return s.replace("\r\n", "\n").rstrip("\n") + "\n"
 
 
+def compose(key: str) -> str:
+    """The JS Zabbix runs for `key`: shared client first, then the collector."""
+    return _normalize(COMMON_JS.read_text()) + "\n" + _normalize(SCRIPTS[key].read_text())
+
+
 def apply(doc: dict) -> bool:
     """Mutate doc in place. Return True if anything changed."""
-    master_js = _normalize(MASTER_JS.read_text())
-    lld_js = _normalize(LLD_JS.read_text())
-
     changed = False
     for tpl in doc["zabbix_export"]["templates"]:
-        for item in tpl.get("items", []):
-            if item.get("key") == "kerio.api.master" and item.get("type") == "SCRIPT":
-                if _normalize(item.get("params", "")) != master_js:
+        for obj in tpl.get("items", []) + tpl.get("discovery_rules", []):
+            if obj.get("type") == "SCRIPT" and obj.get("key") in SCRIPTS:
+                js = compose(obj["key"])
+                if _normalize(obj.get("params", "")) != js:
                     changed = True
-                item["params"] = _LiteralStr(master_js)
-        for lld in tpl.get("discovery_rules", []):
-            if lld.get("key") == "kerio.services.discovery" and lld.get("type") == "SCRIPT":
-                if _normalize(lld.get("params", "")) != lld_js:
-                    changed = True
-                lld["params"] = _LiteralStr(lld_js)
+                obj["params"] = _LiteralStr(js)
     return changed
 
 
@@ -67,8 +71,8 @@ def main():
     new_text = yaml.dump(doc, sort_keys=False, allow_unicode=True, width=10000)
     if check_only:
         sys.exit(
-            "DRIFT: src/master_collector.js or src/lld_services.js differ from "
-            "the embedded params: blocks in the Script template. "
+            "DRIFT: src/*.js differ from the embedded params: blocks in the "
+            "Script template. "
             "Run: python3 tools/sync_template_js.py"
         )
     SCRIPT_TEMPLATE.write_text(new_text)

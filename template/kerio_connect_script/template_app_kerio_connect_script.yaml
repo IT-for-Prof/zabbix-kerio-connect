@@ -9,7 +9,7 @@ zabbix_export:
     name: Kerio Connect by Script
     vendor:
       name: itforprof.com
-      version: 1.0.0
+      version: 1.1.0
     description: 'Zabbix 7 templates for monitoring Kerio Connect via JSON-RPC Admin API.
 
 
@@ -48,12 +48,6 @@ zabbix_export:
       type: SECRET_TEXT
     - macro: '{$KERIO.QUEUE.WARN}'
       value: '100'
-    - macro: '{$KERIO.DISK.WARN}'
-      value: '80'
-      description: Disk usage warning threshold (percent).
-    - macro: '{$KERIO.DISK.AVG}'
-      value: '90'
-      description: Disk usage average severity threshold (percent).
     - macro: '{$KERIO.DISK.HIGH}'
       value: '95'
       description: Disk usage critical threshold (percent).
@@ -63,6 +57,21 @@ zabbix_export:
     - macro: '{$KERIO.SMTP.AUTH.WARN}'
       value: '1'
       description: SMTP auth-failure rate threshold (failures/s, 5-minute average). 1/s sustained = 300 attempts/5 min.
+    - macro: '{$KERIO.QUEUE.STUCK.AGE}'
+      value: 1h
+      description: Age after which a message with a 4.x.x (temporary) status counts as stuck.
+    - macro: '{$KERIO.QUEUE.STUCK.DOMAINS}'
+      value: '3'
+      description: Stuck messages to at least this many recipient domains mean outbound delivery is failing, not one dead recipient.
+    - macro: '{$KERIO.QUEUE.AGE.HIGH}'
+      value: 24h
+      description: Oldest queued message age that raises a warning. It clears when Kerio bounces the message (Smtp.get bounceInterval).
+    - macro: '{$KERIO.LOG.LINES}'
+      value: '5000'
+      description: Mail log tail read by the relay check every hour; must cover one hour of log.
+    - macro: '{$KERIO.RELAY.UNAUTH.ALLOW}'
+      value: ''
+      description: Regex of private Sender-Host addresses allowed to relay without auth (specific internal hosts only, never a NAT address). Empty = none.
     tags:
     - tag: class
       value: application
@@ -99,7 +108,8 @@ zabbix_export:
       - name: password
         value: '{$KERIO.API.PASSWORD}'
       params: |
-        // master_collector.js - Zabbix Script item (Duktape engine)
+        // kerio_api.js - shared Kerio JSON-RPC client (Duktape engine). tools/sync_template_js.py
+        // prepends it to every collector, because a Zabbix Script item cannot import code.
         var params = JSON.parse(value);
         var baseUrl = params.scheme + '://' + params.host + ':' + params.port + '/admin/api/jsonrpc/';
         var reqId = 0;
@@ -132,33 +142,71 @@ zabbix_export:
             return result.result;
         }
 
-        try {
-            var loginResult = apiCall('Session.login', {
-                userName: params.username,
-                password: params.password,
-                application: { name: 'Zabbix Monitoring', vendor: 'Zabbix', version: '7.0' }
-            });
-            token = loginResult.token;
-
-            var statsResp = apiCall('Statistics.get');
-            var svcsResp = apiCall('Services.get');
-            var licResp = apiCall('ProductRegistration.getFullStatus');
-            var serverResp = apiCall('Server.getVersion');
-
-            try { apiCall('Session.logout'); } catch (e) {}
-            token = null;
-            cookie = null;
-
-            return JSON.stringify({
-                statistics: statsResp.statistics || {},
-                services: svcsResp.services || [],
-                license: licResp.status || {},
-                server: serverResp || {}
-            });
-        } catch (e) {
-            try { apiCall('Session.logout'); } catch (x) {}
-            throw e;
+        // Several methods in one HTTP request: Kerio closes the connection after every
+        // response, so each request pays the full connection setup.
+        function batchCall(commands) {
+            var results = apiCall('Batch.run', { commandList: commands });
+            var out = [];
+            for (var i = 0; i < commands.length; i++) {
+                var r = results[i] || {};
+                if (r.error) throw commands[i].method + ' error: ' + r.error.message;
+                out.push(r.result || {});
+            }
+            return out;
         }
+
+        function withSession(appName, body) {
+            try {
+                token = apiCall('Session.login', {
+                    userName: params.username,
+                    password: params.password,
+                    application: { name: appName, vendor: 'Zabbix', version: '7.0' }
+                }).token;
+                var result = body();
+                try { apiCall('Session.logout'); } catch (e) {}
+                return result;
+            } catch (e) {
+                try { apiCall('Session.logout'); } catch (x) {}
+                throw e;
+            }
+        }
+
+        // 'YYYY-MM-DD HH:MM[:SS]' or 'DD/Mon/YYYY HH:MM:SS' in server local time -> unix seconds.
+        var MONTHS = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+        function serverTime(text, offsetMinutes) {
+            var m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?/.exec(text);
+            var utc;
+            if (m) utc = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
+            else {
+                m = /^(\d{2})\/(\w{3})\/(\d{4}) (\d{2}):(\d{2}):(\d{2})/.exec(text);
+                if (!m || !(m[2] in MONTHS)) return null;
+                utc = Date.UTC(+m[3], MONTHS[m[2]], +m[1], +m[4], +m[5], +m[6]);
+            }
+            return utc / 1000 - offsetMinutes * 60;
+        }
+
+        // Zabbix time suffix ('90', '30m', '4h', '1d', '1w') -> seconds.
+        function seconds(text) {
+            var m = /^\s*(\d+)\s*([smhdw]?)\s*$/.exec(String(text));
+            if (!m) throw 'bad time value: ' + text;
+            return +m[1] * { '': 1, s: 1, m: 60, h: 3600, d: 86400, w: 604800 }[m[2]];
+        }
+
+        // master_collector.js - Zabbix Script item (Duktape engine), prefixed with kerio_api.js
+        return withSession('Zabbix Monitoring', function () {
+            var r = batchCall([
+                { method: 'Statistics.get', params: {} },
+                { method: 'Services.get', params: {} },
+                { method: 'ProductRegistration.getFullStatus', params: {} },
+                { method: 'Server.getVersion', params: {} }
+            ]);
+            return JSON.stringify({
+                statistics: r[0].statistics || {},
+                services: r[1].services || [],
+                license: r[2].status || {},
+                server: r[3] || {}
+            });
+        });
       tags:
       - tag: component
         value: raw
@@ -224,67 +272,34 @@ zabbix_export:
       - tag: component
         value: storage
       triggers:
-      - uuid: b2812e40b44348ab9698a6fdaa6020df
-        expression: last(/Kerio Connect by Script/kerio.disk.pct)>{$KERIO.DISK.WARN}
-        name: 'Kerio Connect: Disk usage > {$KERIO.DISK.WARN}%'
-        event_name: 'Kerio Connect on {HOST.NAME}: mail store {ITEM.LASTVALUE1}% used (> {$KERIO.DISK.WARN}%)'
-        priority: WARNING
-        tags:
-        - tag: scope
-          value: capacity
-        manual_close: 'YES'
-        description: 'Mail store disk usage exceeded {$KERIO.DISK.WARN}% (current: {ITEM.VALUE1}%). Free space before mailboxes stop accepting messages.'
-        dependencies:
-        - &id001
-          name: 'Kerio Connect: API data collection failed'
-          expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
-        - name: 'Kerio Connect: Disk usage > {$KERIO.DISK.AVG}%'
-          expression: last(/Kerio Connect by Script/kerio.disk.pct)>{$KERIO.DISK.AVG}
-        - &id002
-          name: 'Kerio Connect: Disk usage > {$KERIO.DISK.HIGH}%'
-          expression: last(/Kerio Connect by Script/kerio.disk.pct)>{$KERIO.DISK.HIGH}
-        - &id003
-          name: 'Kerio Connect: Disk usage > {$KERIO.DISK.DISASTER}%'
-          expression: last(/Kerio Connect by Script/kerio.disk.pct)>{$KERIO.DISK.DISASTER}
-      - uuid: ea637b0951d54d7bba2c5300a4b396e1
-        expression: last(/Kerio Connect by Script/kerio.disk.pct)>{$KERIO.DISK.AVG}
-        name: 'Kerio Connect: Disk usage > {$KERIO.DISK.AVG}%'
-        event_name: 'Kerio Connect on {HOST.NAME}: mail store {ITEM.LASTVALUE1}% used (> {$KERIO.DISK.AVG}%)'
-        priority: AVERAGE
-        tags:
-        - tag: scope
-          value: capacity
-        manual_close: 'YES'
-        description: 'Mail store disk usage exceeded {$KERIO.DISK.AVG}% (current: {ITEM.VALUE1}%). Plan capacity — the next escalation is High at {$KERIO.DISK.HIGH}%.'
-        dependencies:
-        - *id001
-        - *id002
-        - *id003
       - uuid: b089dadc82e94e029386064331ca532f
-        expression: last(/Kerio Connect by Script/kerio.disk.pct)>{$KERIO.DISK.HIGH}
+        expression: last(/Kerio Connect by Script/kerio.disk.pct)>{$KERIO.DISK.HIGH} and last(/Kerio Connect by Script/kerio.disk.pct)<={$KERIO.DISK.DISASTER}
         name: 'Kerio Connect: Disk usage > {$KERIO.DISK.HIGH}%'
-        event_name: 'Kerio Connect on {HOST.NAME}: mail store {ITEM.LASTVALUE1}% used (> {$KERIO.DISK.HIGH}%)'
+        event_name: 'Kerio Connect on {HOST.NAME}: mail store {ITEM.LASTVALUE1} used (> {$KERIO.DISK.HIGH}%)'
         priority: HIGH
         tags:
         - tag: scope
           value: capacity
         manual_close: 'YES'
-        description: 'Mail store disk usage exceeded {$KERIO.DISK.HIGH}% (current: {ITEM.VALUE1}%). Mailboxes will stop accepting messages soon — free space immediately.'
+        description: 'Mail store disk usage exceeded {$KERIO.DISK.HIGH}% (current: {ITEM.VALUE1}). Below the disaster threshold {$KERIO.DISK.DISASTER}%; mailboxes will stop accepting messages soon — free space immediately.'
         dependencies:
-        - *id001
-        - *id003
+        - name: 'Kerio Connect: API data collection failed'
+          expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
+        recovery_mode: RECOVERY_EXPRESSION
+        recovery_expression: last(/Kerio Connect by Script/kerio.disk.pct)<={$KERIO.DISK.HIGH} or last(/Kerio Connect by Script/kerio.disk.pct)>{$KERIO.DISK.DISASTER}
       - uuid: e39af3fbb3fe438c92526d91984adc66
         expression: last(/Kerio Connect by Script/kerio.disk.pct)>{$KERIO.DISK.DISASTER}
         name: 'Kerio Connect: Disk usage > {$KERIO.DISK.DISASTER}%'
-        event_name: 'Kerio Connect on {HOST.NAME}: mail store {ITEM.LASTVALUE1}% used (> {$KERIO.DISK.DISASTER}%) — server stops accepting mail'
+        event_name: 'Kerio Connect on {HOST.NAME}: mail store {ITEM.LASTVALUE1} used (> {$KERIO.DISK.DISASTER}%) — server stops accepting mail'
         priority: DISASTER
         tags:
         - tag: scope
           value: capacity
         manual_close: 'YES'
-        description: 'Mail store disk usage exceeded {$KERIO.DISK.DISASTER}% (current: {ITEM.VALUE1}%). Kerio Connect stops accepting messages at full disk — free space NOW.'
+        description: 'Mail store disk usage exceeded {$KERIO.DISK.DISASTER}% (current: {ITEM.VALUE1}). Kerio Connect stops accepting messages at full disk — free space NOW.'
         dependencies:
-        - *id001
+        - name: 'Kerio Connect: API data collection failed'
+          expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
     - uuid: d27d5bc1c9df493faac549e1da14f4af
       name: 'Kerio Connect: Queue total'
       type: DEPENDENT
@@ -312,7 +327,490 @@ zabbix_export:
         manual_close: 'YES'
         description: 'Queue depth exceeded {$KERIO.QUEUE.WARN} messages (current: {ITEM.VALUE1}). May indicate delivery failures or upstream issues.'
         dependencies:
-        - *id001
+        - &id001
+          name: 'Kerio Connect: API data collection failed'
+          expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
+    - uuid: 825b03030e144d60a0adb4ff1f2584b0
+      name: 'Kerio Connect: Get queue data'
+      type: SCRIPT
+      key: kerio.queue.raw
+      delay: 1m
+      history: 1h
+      trends: '0'
+      timeout: 30s
+      value_type: TEXT
+      description: 'Queue aggregates from Queue.get (oldest 500 entries): oldest_age (s), stuck (4.x.x status older than {$KERIO.QUEUE.STUCK.AGE}), stuck_domains (their distinct recipient domains). No addresses are returned.
+
+        '
+      parameters:
+      - name: host
+        value: '{$KERIO.API.HOST}'
+      - name: port
+        value: '{$KERIO.API.PORT}'
+      - name: scheme
+        value: '{$KERIO.API.SCHEME}'
+      - name: username
+        value: '{$KERIO.API.USERNAME}'
+      - name: password
+        value: '{$KERIO.API.PASSWORD}'
+      - name: stuck_age
+        value: '{$KERIO.QUEUE.STUCK.AGE}'
+      params: |
+        // kerio_api.js - shared Kerio JSON-RPC client (Duktape engine). tools/sync_template_js.py
+        // prepends it to every collector, because a Zabbix Script item cannot import code.
+        var params = JSON.parse(value);
+        var baseUrl = params.scheme + '://' + params.host + ':' + params.port + '/admin/api/jsonrpc/';
+        var reqId = 0;
+        var token = null;
+        var cookie = null;
+
+        function apiCall(method, callParams) {
+            reqId++;
+            var body = { jsonrpc: '2.0', id: reqId, method: method };
+            if (callParams) body.params = callParams;
+            if (token) body.token = token;
+
+            var http = new HttpRequest();
+            http.addHeader('Content-Type: application/json');
+            http.addHeader('Accept: application/json');
+            if (cookie) http.addHeader('Cookie: ' + cookie);
+            if (token) http.addHeader('X-Token: ' + token);
+
+            var resp = http.post(baseUrl, JSON.stringify(body));
+            var status = http.getStatus();
+            if (status < 200 || status >= 300) throw 'HTTP ' + status + ' on ' + method;
+
+            var result = JSON.parse(resp);
+            if (result.error) throw method + ' error: ' + result.error.message;
+            if (method === 'Session.login') {
+                var headers = http.getHeaders ? http.getHeaders() : {};
+                var sc = headers['set-cookie'] || headers['Set-Cookie'] || '';
+                if (sc) cookie = sc.split(';')[0];
+            }
+            return result.result;
+        }
+
+        // Several methods in one HTTP request: Kerio closes the connection after every
+        // response, so each request pays the full connection setup.
+        function batchCall(commands) {
+            var results = apiCall('Batch.run', { commandList: commands });
+            var out = [];
+            for (var i = 0; i < commands.length; i++) {
+                var r = results[i] || {};
+                if (r.error) throw commands[i].method + ' error: ' + r.error.message;
+                out.push(r.result || {});
+            }
+            return out;
+        }
+
+        function withSession(appName, body) {
+            try {
+                token = apiCall('Session.login', {
+                    userName: params.username,
+                    password: params.password,
+                    application: { name: appName, vendor: 'Zabbix', version: '7.0' }
+                }).token;
+                var result = body();
+                try { apiCall('Session.logout'); } catch (e) {}
+                return result;
+            } catch (e) {
+                try { apiCall('Session.logout'); } catch (x) {}
+                throw e;
+            }
+        }
+
+        // 'YYYY-MM-DD HH:MM[:SS]' or 'DD/Mon/YYYY HH:MM:SS' in server local time -> unix seconds.
+        var MONTHS = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+        function serverTime(text, offsetMinutes) {
+            var m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?/.exec(text);
+            var utc;
+            if (m) utc = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
+            else {
+                m = /^(\d{2})\/(\w{3})\/(\d{4}) (\d{2}):(\d{2}):(\d{2})/.exec(text);
+                if (!m || !(m[2] in MONTHS)) return null;
+                utc = Date.UTC(+m[3], MONTHS[m[2]], +m[1], +m[4], +m[5], +m[6]);
+            }
+            return utc / 1000 - offsetMinutes * 60;
+        }
+
+        // Zabbix time suffix ('90', '30m', '4h', '1d', '1w') -> seconds.
+        function seconds(text) {
+            var m = /^\s*(\d+)\s*([smhdw]?)\s*$/.exec(String(text));
+            if (!m) throw 'bad time value: ' + text;
+            return +m[1] * { '': 1, s: 1, m: 60, h: 3600, d: 86400, w: 604800 }[m[2]];
+        }
+
+        // queue_collector.js - Zabbix Script item (Duktape engine), prefixed with kerio_api.js.
+        // Returns aggregates only: queue entries carry customer addresses, which must not reach history.
+        function recipientDomains(to) {
+            var out = [];
+            var parts = String(to || '').split(/[,;\s]+/);
+            for (var i = 0; i < parts.length; i++) {
+                var at = parts[i].lastIndexOf('@');
+                if (at >= 0) out.push(parts[i].substr(at + 1).replace(/[<>]/g, '').toLowerCase());
+            }
+            return out;
+        }
+
+        function queueStats(list, now, offsetMinutes, stuckAge) {
+            var oldest = 0, stuck = 0, domains = {}, domainCount = 0;
+            for (var i = 0; i < list.length; i++) {
+                var created = serverTime(list[i].creationTime || '', offsetMinutes);
+                if (created === null) continue;
+                var age = Math.max(0, now - created);
+                if (age > oldest) oldest = age;
+                if (!/^4\./.test(list[i].status || '') || age <= stuckAge) continue;
+                stuck++;
+                var d = recipientDomains(list[i].to);
+                for (var j = 0; j < d.length; j++) {
+                    if (!domains[d[j]]) { domains[d[j]] = true; domainCount++; }
+                }
+            }
+            return { oldest_age: oldest, stuck: stuck, stuck_domains: domainCount };
+        }
+
+        return withSession('Zabbix Queue', function () {
+            var r = batchCall([
+                { method: 'Server.getServerTime', params: {} },
+                // shortcut: the oldest 500 entries only; a bigger queue already fires the stuck-domains trigger.
+                { method: 'Queue.get', params: { query: { start: 0, limit: 500, orderBy: [{ columnName: 'creationTime', direction: 'Asc' }] } } }
+            ]);
+            return JSON.stringify(queueStats(r[1].list || [], r[0].info.currentTime, r[0].info.timezoneOffset, seconds(params.stuck_age)));
+        });
+      tags:
+      - tag: component
+        value: raw
+      triggers:
+      - uuid: 0399f47401d34c718b1f03b6c5cc9622
+        expression: nodata(/Kerio Connect by Script/kerio.queue.raw,5m)=1
+        name: 'Kerio Connect: Queue data collection failed'
+        event_name: 'Kerio Connect on {HOST.NAME}: queue data collection failed (no data for 5m)'
+        priority: WARNING
+        tags:
+        - tag: scope
+          value: availability
+        manual_close: 'YES'
+        description: Queue.get or Server.getServerTime has not returned data for 5 minutes. Check the API user role (Auditor is enough).
+        dependencies:
+        - name: 'Kerio Connect: API data collection failed'
+          expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
+    - uuid: 2f5030f023fc4019a7c8f3d2443d0419
+      name: 'Kerio Connect: Queue oldest message age'
+      type: DEPENDENT
+      key: kerio.queue.oldest.age
+      delay: '0'
+      value_type: UNSIGNED
+      units: s
+      master_item:
+        key: kerio.queue.raw
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.oldest_age
+      tags:
+      - tag: component
+        value: queue
+      triggers:
+      - uuid: e05f1a70d485456084b47b95cf80b3c6
+        expression: last(/Kerio Connect by Script/kerio.queue.oldest.age)>{$KERIO.QUEUE.AGE.HIGH}
+        name: 'Kerio Connect: Message queued longer than {$KERIO.QUEUE.AGE.HIGH}'
+        event_name: 'Kerio Connect on {HOST.NAME}: oldest queued message is {ITEM.LASTVALUE1} old (> {$KERIO.QUEUE.AGE.HIGH})'
+        priority: WARNING
+        tags:
+        - tag: scope
+          value: performance
+        manual_close: 'YES'
+        description: At least one message waits longer than {$KERIO.QUEUE.AGE.HIGH}. Usually a dead recipient server; the problem clears when Kerio returns the message to the sender. Check the queue in Kerio admin.
+        dependencies:
+        - name: 'Kerio Connect: API data collection failed'
+          expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
+    - uuid: de7d5347a75540c39c13bfce811bdc12
+      name: 'Kerio Connect: Queue stuck messages'
+      type: DEPENDENT
+      key: kerio.queue.stuck
+      delay: '0'
+      value_type: UNSIGNED
+      master_item:
+        key: kerio.queue.raw
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.stuck
+      tags:
+      - tag: component
+        value: queue
+    - uuid: 287f3c5fd5e14179adb759275c2b94e7
+      name: 'Kerio Connect: Queue stuck recipient domains'
+      type: DEPENDENT
+      key: kerio.queue.stuck.domains
+      delay: '0'
+      value_type: UNSIGNED
+      master_item:
+        key: kerio.queue.raw
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.stuck_domains
+      tags:
+      - tag: component
+        value: queue
+      triggers:
+      - uuid: 2c2dd413a62c43a4ba5e7d4ed9210882
+        expression: last(/Kerio Connect by Script/kerio.queue.stuck.domains)>={$KERIO.QUEUE.STUCK.DOMAINS}
+        name: 'Kerio Connect: Outbound delivery failing'
+        event_name: 'Kerio Connect on {HOST.NAME}: messages older than {$KERIO.QUEUE.STUCK.AGE} stuck for {ITEM.LASTVALUE1} recipient domains'
+        priority: AVERAGE
+        tags:
+        - tag: scope
+          value: availability
+        manual_close: 'YES'
+        description: Messages with a temporary (4.x.x) status older than {$KERIO.QUEUE.STUCK.AGE} wait for at least {$KERIO.QUEUE.STUCK.DOMAINS} different recipient domains. One dead recipient does not trigger this; a broken outbound path (relay, NAT, DNS, blocked port 25) does.
+        dependencies:
+        - name: 'Kerio Connect: API data collection failed'
+          expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
+    - uuid: 1f0cf68cb77b4d86a08e08a3a3472fe9
+      name: 'Kerio Connect: Get relay check data'
+      type: SCRIPT
+      key: kerio.relay.unauth
+      delay: 1h
+      history: 1h
+      trends: '0'
+      timeout: 30s
+      value_type: TEXT
+      description: 'Counts mail log Recv lines of the last hour with Service SMTP, no User (unauthenticated), a private Sender-Host and an external recipient: a sign of NAT on the path to Kerio, which turns the Local clients group into an open relay. Returns count and truncated (log tail shorter than one hour).
+
+        '
+      parameters:
+      - name: host
+        value: '{$KERIO.API.HOST}'
+      - name: port
+        value: '{$KERIO.API.PORT}'
+      - name: scheme
+        value: '{$KERIO.API.SCHEME}'
+      - name: username
+        value: '{$KERIO.API.USERNAME}'
+      - name: password
+        value: '{$KERIO.API.PASSWORD}'
+      - name: lines
+        value: '{$KERIO.LOG.LINES}'
+      - name: allow
+        value: '{$KERIO.RELAY.UNAUTH.ALLOW}'
+      params: |
+        // kerio_api.js - shared Kerio JSON-RPC client (Duktape engine). tools/sync_template_js.py
+        // prepends it to every collector, because a Zabbix Script item cannot import code.
+        var params = JSON.parse(value);
+        var baseUrl = params.scheme + '://' + params.host + ':' + params.port + '/admin/api/jsonrpc/';
+        var reqId = 0;
+        var token = null;
+        var cookie = null;
+
+        function apiCall(method, callParams) {
+            reqId++;
+            var body = { jsonrpc: '2.0', id: reqId, method: method };
+            if (callParams) body.params = callParams;
+            if (token) body.token = token;
+
+            var http = new HttpRequest();
+            http.addHeader('Content-Type: application/json');
+            http.addHeader('Accept: application/json');
+            if (cookie) http.addHeader('Cookie: ' + cookie);
+            if (token) http.addHeader('X-Token: ' + token);
+
+            var resp = http.post(baseUrl, JSON.stringify(body));
+            var status = http.getStatus();
+            if (status < 200 || status >= 300) throw 'HTTP ' + status + ' on ' + method;
+
+            var result = JSON.parse(resp);
+            if (result.error) throw method + ' error: ' + result.error.message;
+            if (method === 'Session.login') {
+                var headers = http.getHeaders ? http.getHeaders() : {};
+                var sc = headers['set-cookie'] || headers['Set-Cookie'] || '';
+                if (sc) cookie = sc.split(';')[0];
+            }
+            return result.result;
+        }
+
+        // Several methods in one HTTP request: Kerio closes the connection after every
+        // response, so each request pays the full connection setup.
+        function batchCall(commands) {
+            var results = apiCall('Batch.run', { commandList: commands });
+            var out = [];
+            for (var i = 0; i < commands.length; i++) {
+                var r = results[i] || {};
+                if (r.error) throw commands[i].method + ' error: ' + r.error.message;
+                out.push(r.result || {});
+            }
+            return out;
+        }
+
+        function withSession(appName, body) {
+            try {
+                token = apiCall('Session.login', {
+                    userName: params.username,
+                    password: params.password,
+                    application: { name: appName, vendor: 'Zabbix', version: '7.0' }
+                }).token;
+                var result = body();
+                try { apiCall('Session.logout'); } catch (e) {}
+                return result;
+            } catch (e) {
+                try { apiCall('Session.logout'); } catch (x) {}
+                throw e;
+            }
+        }
+
+        // 'YYYY-MM-DD HH:MM[:SS]' or 'DD/Mon/YYYY HH:MM:SS' in server local time -> unix seconds.
+        var MONTHS = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+        function serverTime(text, offsetMinutes) {
+            var m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?/.exec(text);
+            var utc;
+            if (m) utc = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
+            else {
+                m = /^(\d{2})\/(\w{3})\/(\d{4}) (\d{2}):(\d{2}):(\d{2})/.exec(text);
+                if (!m || !(m[2] in MONTHS)) return null;
+                utc = Date.UTC(+m[3], MONTHS[m[2]], +m[1], +m[4], +m[5], +m[6]);
+            }
+            return utc / 1000 - offsetMinutes * 60;
+        }
+
+        // Zabbix time suffix ('90', '30m', '4h', '1d', '1w') -> seconds.
+        function seconds(text) {
+            var m = /^\s*(\d+)\s*([smhdw]?)\s*$/.exec(String(text));
+            if (!m) throw 'bad time value: ' + text;
+            return +m[1] * { '': 1, s: 1, m: 60, h: 3600, d: 86400, w: 604800 }[m[2]];
+        }
+
+        // relay_collector.js - Zabbix Script item (Duktape engine), prefixed with kerio_api.js.
+        // Counts unauthenticated SMTP from private addresses to external recipients in the last hour of
+        // the mail log: a sign of SNAT on the path to Kerio, which makes "Local clients" an open relay.
+        var PRIVATE = /^(10(\.\d{1,3}){3}|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2}|192\.168(\.\d{1,3}){2})$/;
+        // Recv fields: Queue-ID, Service, From, To, Size, Sender-Host, [User], [SSL], [Subject], [Msg-Id].
+        var SENDER = /, Size: \d+, Sender-Host: ([^,]+)(, User: [^,]*)?(?=, SSL: |, Subject: |, Msg-Id: |$)/g;
+        var WINDOW = 3600; // item delay: each run counts only lines newer than one interval
+
+        // From, To and Subject are sender-controlled and may imitate the Size/Sender-Host run, so every
+        // candidate counts: an injected fake can raise a false alarm but cannot hide the real sender.
+        function unauthRelayHost(line, localDomains) {
+            var i = line.indexOf('] Recv: ');
+            if (i < 0) return null;
+            var rest = line.substr(i + 8);
+            if (!/^Queue-ID: \S+, Service: SMTP, From: /.test(rest)) return null;
+            var to = rest.indexOf(', To: ');
+            if (to < 0) return null;
+            SENDER.lastIndex = 0;
+            var m, first = -1, host = null;
+            while ((m = SENDER.exec(rest)) !== null) {
+                if (first < 0) first = m.index;
+                if (!m[2] && PRIVATE.test(m[1])) host = m[1];
+            }
+            if (host === null || first < to) return null;
+            var re = /@([^<>@\s,]+)>/g, d, external = false;
+            var recipients = rest.substring(to, first);
+            while ((d = re.exec(recipients)) !== null) {
+                if (!localDomains[d[1].toLowerCase()]) external = true;
+            }
+            return external ? host : null;
+        }
+
+        function relayStats(lines, now, offsetMinutes, localDomains, allow, truncatable) {
+            var since = now - WINDOW, count = 0, oldest = null;
+            for (var i = 0; i < lines.length; i++) {
+                var text = lines[i].content || '';
+                var t = serverTime(text.substr(1), offsetMinutes);
+                if (t === null) continue;
+                if (oldest === null) oldest = t;
+                if (t <= since) continue;
+                var host = unauthRelayHost(text, localDomains);
+                if (host !== null && !(allow && allow.test(host))) count++;
+            }
+            return { count: count, truncated: truncatable && oldest !== null && oldest > since ? 1 : 0 };
+        }
+
+        return withSession('Zabbix Relay', function () {
+            var r = batchCall([
+                { method: 'Server.getServerTime', params: {} },
+                { method: 'Domains.get', params: { query: { fields: ['name'], start: 0, limit: 1000 } } },
+                { method: 'Logs.get', params: { logName: 'mail', fromLine: 0, countLines: 1 } }
+            ]);
+            var local = {}, domains = r[1].list || [];
+            for (var i = 0; i < domains.length; i++) local[String(domains[i].name).toLowerCase()] = true;
+            var limit = parseInt(params.lines, 10), total = r[2].totalItems || 0;
+            var view = total ? apiCall('Logs.get', { logName: 'mail', fromLine: Math.max(0, total - limit), countLines: limit }).viewport || [] : [];
+            var allow = params.allow ? new RegExp(params.allow) : null;
+            return JSON.stringify(relayStats(view, r[0].info.currentTime, r[0].info.timezoneOffset, local, allow, total > limit));
+        });
+      tags:
+      - tag: component
+        value: raw
+      triggers:
+      - uuid: 8fc45610700d468295572222234d4b0b
+        expression: nodata(/Kerio Connect by Script/kerio.relay.unauth,3h)=1
+        name: 'Kerio Connect: Relay check data collection failed'
+        event_name: 'Kerio Connect on {HOST.NAME}: relay check has no data for 3h'
+        priority: WARNING
+        tags:
+        - tag: scope
+          value: security
+        manual_close: 'YES'
+        description: Logs.get or Domains.get has not returned data for 3 hours; unauthenticated relay is not being watched.
+        dependencies:
+        - name: 'Kerio Connect: API data collection failed'
+          expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
+    - uuid: f276baa9efc9477e9c120b2f937ce419
+      name: 'Kerio Connect: Unauthenticated relay from private addresses'
+      type: DEPENDENT
+      key: kerio.relay.unauth.count
+      delay: '0'
+      value_type: UNSIGNED
+      master_item:
+        key: kerio.relay.unauth
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.count
+      tags:
+      - tag: component
+        value: security
+      triggers:
+      - uuid: af09cc1d324e4c8aba794952066ff7cd
+        expression: sum(/Kerio Connect by Script/kerio.relay.unauth.count,24h)>0
+        name: 'Kerio Connect: Unauthenticated relay from a private address'
+        event_name: 'Kerio Connect on {HOST.NAME}: unauthenticated SMTP from a private address to external recipients in the last 24h'
+        priority: AVERAGE
+        tags:
+        - tag: scope
+          value: security
+        manual_close: 'YES'
+        description: The mail log has SMTP messages without authentication from a private Sender-Host to an external domain. If the address is a NAT gateway, every Internet client behind it can relay through Kerio. Find the Sender-Host in the Kerio mail log (Recv lines without User).
+        dependencies:
+        - name: 'Kerio Connect: API data collection failed'
+          expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
+    - uuid: a48e7af28f544862a896883c1f40ea6e
+      name: 'Kerio Connect: Relay check log tail truncated'
+      type: DEPENDENT
+      key: kerio.relay.unauth.truncated
+      delay: '0'
+      value_type: UNSIGNED
+      master_item:
+        key: kerio.relay.unauth
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.truncated
+      tags:
+      - tag: component
+        value: security
+      triggers:
+      - uuid: fcc19d8dfaba491c82ce390ac08d604f
+        expression: last(/Kerio Connect by Script/kerio.relay.unauth.truncated)=1
+        name: 'Kerio Connect: Relay check misses part of the hour'
+        event_name: 'Kerio Connect on {HOST.NAME}: mail log tail of {$KERIO.LOG.LINES} lines is shorter than one hour'
+        priority: WARNING
+        tags:
+        - tag: scope
+          value: security
+        manual_close: 'YES'
+        description: More than {$KERIO.LOG.LINES} mail log lines per hour; the relay check does not see the whole hour. Raise {$KERIO.LOG.LINES} on the host.
     - uuid: ad182ae563224a35aa4175bc12e5d333
       name: 'Kerio Connect: Uptime days'
       type: DEPENDENT
@@ -795,7 +1293,8 @@ zabbix_export:
       - name: password
         value: '{$KERIO.API.PASSWORD}'
       params: |
-        // lld_services.js - Zabbix Script item for service LLD (Duktape engine)
+        // kerio_api.js - shared Kerio JSON-RPC client (Duktape engine). tools/sync_template_js.py
+        // prepends it to every collector, because a Zabbix Script item cannot import code.
         var params = JSON.parse(value);
         var baseUrl = params.scheme + '://' + params.host + ':' + params.port + '/admin/api/jsonrpc/';
         var reqId = 0;
@@ -819,7 +1318,7 @@ zabbix_export:
             if (status < 200 || status >= 300) throw 'HTTP ' + status + ' on ' + method;
 
             var result = JSON.parse(resp);
-            if (result.error) throw result.error.message;
+            if (result.error) throw method + ' error: ' + result.error.message;
             if (method === 'Session.login') {
                 var headers = http.getHeaders ? http.getHeaders() : {};
                 var sc = headers['set-cookie'] || headers['Set-Cookie'] || '';
@@ -828,27 +1327,65 @@ zabbix_export:
             return result.result;
         }
 
-        try {
-            var loginResult = apiCall('Session.login', {
-                userName: params.username,
-                password: params.password,
-                application: { name: 'Zabbix LLD', vendor: 'Zabbix', version: '7.0' }
-            });
-            token = loginResult.token;
+        // Several methods in one HTTP request: Kerio closes the connection after every
+        // response, so each request pays the full connection setup.
+        function batchCall(commands) {
+            var results = apiCall('Batch.run', { commandList: commands });
+            var out = [];
+            for (var i = 0; i < commands.length; i++) {
+                var r = results[i] || {};
+                if (r.error) throw commands[i].method + ' error: ' + r.error.message;
+                out.push(r.result || {});
+            }
+            return out;
+        }
 
-            var svcs = apiCall('Services.get');
-            try { apiCall('Session.logout'); } catch (e) {}
+        function withSession(appName, body) {
+            try {
+                token = apiCall('Session.login', {
+                    userName: params.username,
+                    password: params.password,
+                    application: { name: appName, vendor: 'Zabbix', version: '7.0' }
+                }).token;
+                var result = body();
+                try { apiCall('Session.logout'); } catch (e) {}
+                return result;
+            } catch (e) {
+                try { apiCall('Session.logout'); } catch (x) {}
+                throw e;
+            }
+        }
 
-            var list = svcs.services || [];
+        // 'YYYY-MM-DD HH:MM[:SS]' or 'DD/Mon/YYYY HH:MM:SS' in server local time -> unix seconds.
+        var MONTHS = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+        function serverTime(text, offsetMinutes) {
+            var m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?/.exec(text);
+            var utc;
+            if (m) utc = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
+            else {
+                m = /^(\d{2})\/(\w{3})\/(\d{4}) (\d{2}):(\d{2}):(\d{2})/.exec(text);
+                if (!m || !(m[2] in MONTHS)) return null;
+                utc = Date.UTC(+m[3], MONTHS[m[2]], +m[1], +m[4], +m[5], +m[6]);
+            }
+            return utc / 1000 - offsetMinutes * 60;
+        }
+
+        // Zabbix time suffix ('90', '30m', '4h', '1d', '1w') -> seconds.
+        function seconds(text) {
+            var m = /^\s*(\d+)\s*([smhdw]?)\s*$/.exec(String(text));
+            if (!m) throw 'bad time value: ' + text;
+            return +m[1] * { '': 1, s: 1, m: 60, h: 3600, d: 86400, w: 604800 }[m[2]];
+        }
+
+        // lld_services.js - Zabbix Script item for service LLD (Duktape engine), prefixed with kerio_api.js
+        return withSession('Zabbix LLD', function () {
+            var list = apiCall('Services.get').services || [];
             var out = [];
             for (var i = 0; i < list.length; i++) {
                 out.push({ '{#SERVICE}': list[i].name, '{#STARTTYPE}': list[i].howToStart || '' });
             }
             return JSON.stringify(out);
-        } catch (e) {
-            try { apiCall('Session.logout'); } catch (x) {}
-            throw e;
-        }
+        });
       item_prototypes:
       - uuid: 55e9693de79b4ab09f3f06e1b19097ca
         name: 'Kerio Connect: Service {#SERVICE} status'
