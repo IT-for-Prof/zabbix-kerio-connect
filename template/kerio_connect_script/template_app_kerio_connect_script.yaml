@@ -9,7 +9,7 @@ zabbix_export:
     name: Kerio Connect by Script
     vendor:
       name: itforprof.com
-      version: 1.1.0
+      version: 1.2.0
     description: 'Zabbix 7 templates for monitoring Kerio Connect via JSON-RPC Admin API.
 
 
@@ -566,7 +566,7 @@ zabbix_export:
       trends: '0'
       timeout: 30s
       value_type: TEXT
-      description: 'Counts mail log Recv lines of the last hour with Service SMTP, no User (unauthenticated), a private Sender-Host and an external recipient: a sign of NAT on the path to Kerio, which turns the Local clients group into an open relay. Returns count and truncated (log tail shorter than one hour).
+      description: 'Counts mail log Recv lines of the last hour with Service SMTP, no User (unauthenticated), a private Sender-Host and an external recipient: a sign of NAT on the path to Kerio, which turns the Local clients group into an open relay. Returns count and truncated (log tail shorter than one hour). Also returns restricted (Smtp.get relayControl.isRestricted), group and group_entries (enabled entries of the relay IP group).
 
         '
       parameters:
@@ -698,6 +698,18 @@ zabbix_export:
             return external ? host : null;
         }
 
+        // Enabled entries of the group Kerio relays for (Smtp.get relayControl), sorted: one value per
+        // group content, so a change of the group is a change of the item.
+        function relayGroupEntries(rows, groupId) {
+            var out = [];
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i];
+                if (r.groupId !== groupId || !r.enabled) continue;
+                out.push(r.type + ' ' + (r.type === 'Host' ? r.host : r.addr1 + '/' + r.addr2));
+            }
+            return out.sort();
+        }
+
         function relayStats(lines, now, offsetMinutes, localDomains, allow, truncatable) {
             var since = now - WINDOW, count = 0, oldest = null;
             for (var i = 0; i < lines.length; i++) {
@@ -716,15 +728,22 @@ zabbix_export:
             var r = batchCall([
                 { method: 'Server.getServerTime', params: {} },
                 { method: 'Domains.get', params: { query: { fields: ['name'], start: 0, limit: 1000 } } },
-                { method: 'Logs.get', params: { logName: 'mail', fromLine: 0, countLines: 1 } }
+                { method: 'Logs.get', params: { logName: 'mail', fromLine: 0, countLines: 1 } },
+                { method: 'Smtp.get', params: {} },
+                { method: 'IpAddressGroups.get', params: { query: { start: 0, limit: 5000 } } }
             ]);
+            var relay = (r[3].server || r[3]).relayControl || {};
             var local = {}, domains = r[1].list || [];
             for (var i = 0; i < domains.length; i++) local[String(domains[i].name).toLowerCase()] = true;
             var limit = parseInt(params.lines, 10), total = r[2].totalItems || 0;
             var view = total ? apiCall('Logs.get', { logName: 'mail', fromLine: Math.max(0, total - limit), countLines: limit }).viewport || [] : [];
             // whole-address match: an unanchored '192.168.1.5' would also exempt .50-.59
             var allow = params.allow ? new RegExp('^(?:' + params.allow + ')$') : null;
-            return JSON.stringify(relayStats(view, r[0].info.currentTime, r[0].info.timezoneOffset, local, allow, total > limit));
+            var out = relayStats(view, r[0].info.currentTime, r[0].info.timezoneOffset, local, allow, total > limit);
+            out.restricted = relay.isRestricted ? 1 : 0;
+            out.group = relay.ipAddressGroupName || '';
+            out.group_entries = relay.isRestricted ? relayGroupEntries(r[4].list || [], relay.ipAddressGroupId) : [];
+            return JSON.stringify(out);
         });
       tags:
       - tag: component
@@ -798,6 +817,75 @@ zabbix_export:
           value: security
         manual_close: 'YES'
         description: More than {$KERIO.LOG.LINES} mail log lines per hour; the relay check does not see the whole hour. Raise {$KERIO.LOG.LINES} on the host.
+    - uuid: 44910dda9ea64631b4fc5fea8adf4ee9
+      name: 'Kerio Connect: Relay restricted'
+      type: DEPENDENT
+      key: kerio.relay.restricted
+      delay: '0'
+      value_type: UNSIGNED
+      description: '1 when SMTP relay is allowed only for the relay IP group and/or authenticated users (Smtp.get relayControl.isRestricted), 0 = open relay.
+
+        '
+      master_item:
+        key: kerio.relay.unauth
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.restricted
+      tags:
+      - tag: component
+        value: security
+      triggers:
+      - uuid: 5fecb581be96471e95e35d24f4963780
+        expression: last(/Kerio Connect by Script/kerio.relay.restricted)=0
+        name: 'Kerio Connect: Open relay'
+        event_name: 'Kerio Connect on {HOST.NAME}: SMTP relay is not restricted (open relay)'
+        priority: HIGH
+        tags:
+        - tag: scope
+          value: security
+        manual_close: 'YES'
+        description: 'Relay control in Kerio (Configuration > SMTP Server > Relay Control) allows relaying for everyone: the server can be used to send spam. Restrict relay to an IP group and authenticated users.'
+        dependencies:
+        - name: 'Kerio Connect: API data collection failed'
+          expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
+    - uuid: 032917831c534d8e8fac2b25a60ede30
+      name: 'Kerio Connect: Relay group entries'
+      type: DEPENDENT
+      key: kerio.relay.group.entries
+      delay: '0'
+      history: 90d
+      trends: '0'
+      value_type: TEXT
+      description: 'Sorted enabled entries of the IP group Kerio allows to relay without authentication (Smtp.get relayControl group). Every public entry there may relay; compare with firewall rules that rely on this list.
+
+        '
+      master_item:
+        key: kerio.relay.unauth
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.group_entries
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1d
+      tags:
+      - tag: component
+        value: security
+      triggers:
+      - uuid: 09b194e378b147da809f768bfa5c1b85
+        expression: change(/Kerio Connect by Script/kerio.relay.group.entries)=1
+        name: 'Kerio Connect: Relay group changed'
+        event_name: 'Kerio Connect on {HOST.NAME}: relay IP group changed'
+        priority: WARNING
+        tags:
+        - tag: scope
+          value: security
+        manual_close: 'YES'
+        description: Entries of the IP group allowed to relay without authentication changed. Check that every new public address is intended, and update firewall aliases that mirror the group.
+        dependencies:
+        - name: 'Kerio Connect: API data collection failed'
+          expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
     - uuid: ad182ae563224a35aa4175bc12e5d333
       name: 'Kerio Connect: Uptime days'
       type: DEPENDENT

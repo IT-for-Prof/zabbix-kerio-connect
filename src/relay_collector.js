@@ -30,6 +30,18 @@ function unauthRelayHost(line, localDomains) {
     return external ? host : null;
 }
 
+// Enabled entries of the group Kerio relays for (Smtp.get relayControl), sorted: one value per
+// group content, so a change of the group is a change of the item.
+function relayGroupEntries(rows, groupId) {
+    var out = [];
+    for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        if (r.groupId !== groupId || !r.enabled) continue;
+        out.push(r.type + ' ' + (r.type === 'Host' ? r.host : r.addr1 + '/' + r.addr2));
+    }
+    return out.sort();
+}
+
 function relayStats(lines, now, offsetMinutes, localDomains, allow, truncatable) {
     var since = now - WINDOW, count = 0, oldest = null;
     for (var i = 0; i < lines.length; i++) {
@@ -48,13 +60,20 @@ return withSession('Zabbix Relay', function () {
     var r = batchCall([
         { method: 'Server.getServerTime', params: {} },
         { method: 'Domains.get', params: { query: { fields: ['name'], start: 0, limit: 1000 } } },
-        { method: 'Logs.get', params: { logName: 'mail', fromLine: 0, countLines: 1 } }
+        { method: 'Logs.get', params: { logName: 'mail', fromLine: 0, countLines: 1 } },
+        { method: 'Smtp.get', params: {} },
+        { method: 'IpAddressGroups.get', params: { query: { start: 0, limit: 5000 } } }
     ]);
+    var relay = (r[3].server || r[3]).relayControl || {};
     var local = {}, domains = r[1].list || [];
     for (var i = 0; i < domains.length; i++) local[String(domains[i].name).toLowerCase()] = true;
     var limit = parseInt(params.lines, 10), total = r[2].totalItems || 0;
     var view = total ? apiCall('Logs.get', { logName: 'mail', fromLine: Math.max(0, total - limit), countLines: limit }).viewport || [] : [];
     // whole-address match: an unanchored '192.168.1.5' would also exempt .50-.59
     var allow = params.allow ? new RegExp('^(?:' + params.allow + ')$') : null;
-    return JSON.stringify(relayStats(view, r[0].info.currentTime, r[0].info.timezoneOffset, local, allow, total > limit));
+    var out = relayStats(view, r[0].info.currentTime, r[0].info.timezoneOffset, local, allow, total > limit);
+    out.restricted = relay.isRestricted ? 1 : 0;
+    out.group = relay.ipAddressGroupName || '';
+    out.group_entries = relay.isRestricted ? relayGroupEntries(r[4].list || [], relay.ipAddressGroupId) : [];
+    return JSON.stringify(out);
 });

@@ -108,6 +108,16 @@ def test_queue_bad_threshold_fails_item():
 
 
 DOMAINS = {"Domains.get": {"list": [{"name": "Local.example"}]}}
+GROUP_ID = "keriodb://ipaddressgroup/1"
+RELAY = {
+    "Smtp.get": {"server": {"relayControl": {"isRestricted": True, "ipAddressGroupName": "Local clients", "ipAddressGroupId": GROUP_ID}}},
+    "IpAddressGroups.get": {"list": [
+        {"groupId": GROUP_ID, "enabled": True, "type": "Network", "host": "", "addr1": "10.0.0.0", "addr2": "255.0.0.0"},
+        {"groupId": GROUP_ID, "enabled": True, "type": "Host", "host": "198.51.100.7", "addr1": "", "addr2": ""},
+        {"groupId": GROUP_ID, "enabled": False, "type": "Host", "host": "198.51.100.8", "addr1": "", "addr2": ""},
+        {"groupId": "keriodb://ipaddressgroup/2", "enabled": True, "type": "Host", "host": "203.0.113.1", "addr1": "", "addr2": ""},
+    ]},
+}
 
 
 def recv(when, sender, user=None, to="<a@ext.example>", subject="Hello", service="SMTP", sender_from="<s@ext.example>"):
@@ -119,7 +129,10 @@ def recv(when, sender, user=None, to="<a@ext.example>", subject="Hello", service
 
 
 def relay(lines, lines_limit="5000", allow=""):
-    return run("kerio.relay.unauth", {**TIME, **DOMAINS, "Logs.get": lines}, lines=lines_limit, allow=allow)
+    out = run("kerio.relay.unauth", {**TIME, **DOMAINS, **RELAY, "Logs.get": lines}, lines=lines_limit, allow=allow)
+    if "result" in out:
+        out["relay"] = {k: out["result"].pop(k) for k in ("restricted", "group", "group_entries")}
+    return out
 
 
 RECENT = "25/Nov/2026 23:30:00"  # 30 minutes before NOW, server local time
@@ -165,6 +178,18 @@ def test_relay_from_cannot_hide_the_real_sender():
 ])
 def test_relay_fake_sender_run_cannot_hide_external_recipient(field):
     assert relay([recv(RECENT, "172.16.70.1", **field)])["result"]["count"] == 1
+
+
+def test_relay_reports_the_enabled_entries_of_kerios_relay_group():
+    out = relay([])
+    assert out["relay"] == {"restricted": 1, "group": "Local clients",
+                            "group_entries": ["Host 198.51.100.7", "Network 10.0.0.0/255.0.0.0"]}
+
+
+def test_relay_open_relay_is_reported():
+    out = run("kerio.relay.unauth", {**TIME, **DOMAINS, "Logs.get": [],
+                                     "Smtp.get": {"relayControl": {"isRestricted": False}}}, lines="5000", allow="")
+    assert out["result"]["restricted"] == 0 and out["result"]["group_entries"] == []
 
 
 def test_relay_allow_regex_matches_whole_address():

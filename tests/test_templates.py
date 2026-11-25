@@ -13,6 +13,7 @@ PROJECT_URL = "https://github.com/IT-for-Prof/zabbix-kerio-connect"
 SCRIPT_ONLY_KEYS = {
     "kerio.queue.raw", "kerio.queue.oldest.age", "kerio.queue.stuck", "kerio.queue.stuck.domains",
     "kerio.relay.unauth", "kerio.relay.unauth.count", "kerio.relay.unauth.truncated",
+    "kerio.relay.restricted", "kerio.relay.group.entries",
 }
 
 
