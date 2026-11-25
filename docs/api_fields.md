@@ -232,8 +232,13 @@ The window starts at `fromLine` and goes forward: the tail is `fromLine = totalI
 `result.list = [{"name": "example.com"}, ...]`.
 
 ### Smtp.get
-`retryInterval`, `bounceInterval`, `warningInterval` as `{"value": 3, "units": "Days"}`; also `relayControl`,
-`verifyClientRDnsEntry`, `blockUnknownDns`.
+`retryInterval`, `bounceInterval`, `warningInterval` as `{"value": 3, "units": "Days"}`; also `verifyClientRDnsEntry`,
+`blockUnknownDns`. The fields may sit under `result.server` (Batch.run) or directly in `result`.
+
+`relayControl = {"isRestricted": true, "ipAddressGroupName": "Local clients", "ipAddressGroupId": "keriodb://ipaddressgroup/<uuid>", "authenticateOutgoing": true, ...}`.
+`isRestricted` false means relay for everyone (open relay). With relay restricted to authenticated users only,
+`ipAddressGroupName` is empty. Entries of the relay group: `IpAddressGroups.get` rows whose `groupId` equals
+`ipAddressGroupId`.
 
 ### IpAddressGroups.get
 ```json
@@ -275,6 +280,8 @@ All paths assume master item returns:
 | `kerio.queue.oldest.age` | `$.oldest_age` of `kerio.queue.raw` | Numeric | s | computed in JS |
 | `kerio.queue.stuck` / `kerio.queue.stuck.domains` | `$.stuck` / `$.stuck_domains` of `kerio.queue.raw` | Numeric | | computed in JS |
 | `kerio.relay.unauth.count` / `.truncated` | `$.count` / `$.truncated` of `kerio.relay.unauth` | Numeric | | computed in JS |
+| `kerio.relay.restricted` | `$.restricted` of `kerio.relay.unauth` | Numeric | | 1 restricted, 0 open relay |
+| `kerio.relay.group.entries` | `$.group_entries` of `kerio.relay.unauth` | Text | | sorted `"<type> <address>"` list |
 | `kerio.smtp.messages.in` | `$.statistics.received.count` | Numeric | messages | cumulative string |
 | `kerio.smtp.messages.out` | `$.statistics.transmitted.count` | Numeric | messages | cumulative string |
 | `kerio.smtp.auth.failures` | `$.statistics.smtpServer.authenticationFailures` | Numeric | | cumulative string |
