@@ -46,18 +46,15 @@ function batchCall(commands) {
 }
 
 function withSession(appName, body) {
+    token = apiCall('Session.login', {
+        userName: params.username,
+        password: params.password,
+        application: { name: appName, vendor: 'Zabbix', version: '7.0' }
+    }).token;
     try {
-        token = apiCall('Session.login', {
-            userName: params.username,
-            password: params.password,
-            application: { name: appName, vendor: 'Zabbix', version: '7.0' }
-        }).token;
-        var result = body();
+        return body();
+    } finally {
         try { apiCall('Session.logout'); } catch (e) {}
-        return result;
-    } catch (e) {
-        try { apiCall('Session.logout'); } catch (x) {}
-        throw e;
     }
 }
 

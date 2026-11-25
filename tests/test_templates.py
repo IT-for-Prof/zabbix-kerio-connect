@@ -10,7 +10,6 @@ AGENT_TEMPLATE = Path("template/kerio_connect_agent/template_app_kerio_connect_a
 ALL_TEMPLATES = [SCRIPT_TEMPLATE, AGENT_TEMPLATE]
 PROJECT_DESCRIPTION = "Zabbix 7 templates for monitoring Kerio Connect via JSON-RPC Admin API"
 PROJECT_URL = "https://github.com/IT-for-Prof/zabbix-kerio-connect"
-# Queue age and relay checks exist only in the Script template (decision of 1.1.0).
 SCRIPT_ONLY_KEYS = {
     "kerio.queue.raw", "kerio.queue.oldest.age", "kerio.queue.stuck", "kerio.queue.stuck.domains",
     "kerio.relay.unauth", "kerio.relay.unauth.count", "kerio.relay.unauth.truncated",
@@ -269,6 +268,12 @@ def test_disk_triggers_one_problem_per_state(path):
     assert high["recovery_mode"] == "RECOVERY_EXPRESSION"
     for t in disk:
         assert [d["name"] for d in t["dependencies"]] == ["Kerio Connect: API data collection failed"]
+
+
+def test_relay_check_delay_matches_its_window():
+    items = load_template(SCRIPT_TEMPLATE)["zabbix_export"]["templates"][0]["items"]
+    assert next(i for i in items if i["key"] == "kerio.relay.unauth")["delay"] == "1h"
+    assert "var WINDOW = 3600;" in Path("src/relay_collector.js").read_text()
 
 
 def test_every_script_item_reports_lost_collection():

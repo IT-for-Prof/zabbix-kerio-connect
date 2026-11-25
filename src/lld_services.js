@@ -1,4 +1,3 @@
-// lld_services.js - Zabbix Script item for service LLD (Duktape engine), prefixed with kerio_api.js
 return withSession('Zabbix LLD', function () {
     var list = apiCall('Services.get').services || [];
     var out = [];

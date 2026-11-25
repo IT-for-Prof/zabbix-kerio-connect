@@ -16,16 +16,14 @@ pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node is no
 
 PARAMS = {"host": "kerio", "port": "4040", "scheme": "https", "username": "u", "password": "p"}
 LOGIN = {"Session.login": {"token": "t"}}
-# 2026-11-25 21:00 UTC = 2026-11-26 00:00 at UTC+3 (timezoneOffset 180, as on the live servers).
+# 2026-11-25 21:00 UTC = 2026-11-26 00:00 server local time at timezoneOffset 180.
 NOW = calendar.timegm((2026, 11, 25, 21, 0, 0))
 TIME = {"Server.getServerTime": {"info": {"timezoneOffset": 180, "currentTime": NOW}}}
 
 
 def run(key, spec, tz="UTC", **extra):
-    script = Path(f"/tmp/kerio-{key}.js")
-    script.write_text(sync_template_js.compose(key))
     proc = subprocess.run(
-        ["node", "tests/js_harness.js", str(script), json.dumps({**PARAMS, **extra}), json.dumps({**LOGIN, **spec})],
+        ["node", "tests/js_harness.js", sync_template_js.compose(key), json.dumps({**PARAMS, **extra}), json.dumps({**LOGIN, **spec})],
         capture_output=True, text=True, env={"TZ": tz, "PATH": "/usr/bin:/usr/local/bin:/bin"}, check=True,
     )
     out = json.loads(proc.stdout)
@@ -113,7 +111,7 @@ DOMAINS = {"Domains.get": {"list": [{"name": "Local.example"}]}}
 
 
 def recv(when, sender, user=None, to="<a@ext.example>", subject="Hello", service="SMTP", sender_from="<s@ext.example>"):
-    fields = [f"Queue-ID: 6b07-1", f"Service: {service}", f"From: {sender_from}", f"To: {to}", "Size: 100", f"Sender-Host: {sender}"]
+    fields = ["Queue-ID: 6b07-1", f"Service: {service}", f"From: {sender_from}", f"To: {to}", "Size: 100", f"Sender-Host: {sender}"]
     if user:
         fields.append(f"User: {user}")
     fields += ["SSL: yes", f"Subject: {subject}", "Msg-Id: <m@ext.example>"]
@@ -168,6 +166,6 @@ def test_relay_truncated_when_tail_shorter_than_hour():
 
 def test_sources_are_es5_for_duktape():
     for path in Path("src").glob("*.js"):
-        text = re.sub(r"//.*", "", path.read_text())
+        text = re.sub(r"(?<!:)//.*", "", path.read_text())
         for token in (r"\blet\b", r"\bconst\b", r"=>", "`", r"\.includes\("):
             assert not re.search(token, text), f"{path}: {token} is not ES5"

@@ -1,5 +1,3 @@
-// queue_collector.js - Zabbix Script item (Duktape engine), prefixed with kerio_api.js.
-// Returns aggregates only: queue entries carry customer addresses, which must not reach history.
 function recipientDomains(to) {
     var out = [];
     var parts = String(to || '').split(/[,;\s]+/);
@@ -11,7 +9,7 @@ function recipientDomains(to) {
 }
 
 function queueStats(list, now, offsetMinutes, stuckAge) {
-    var oldest = 0, stuck = 0, domains = {}, domainCount = 0;
+    var oldest = 0, stuck = 0, domains = {};
     for (var i = 0; i < list.length; i++) {
         var created = serverTime(list[i].creationTime || '', offsetMinutes);
         if (created === null) continue;
@@ -20,17 +18,15 @@ function queueStats(list, now, offsetMinutes, stuckAge) {
         if (!/^4\./.test(list[i].status || '') || age <= stuckAge) continue;
         stuck++;
         var d = recipientDomains(list[i].to);
-        for (var j = 0; j < d.length; j++) {
-            if (!domains[d[j]]) { domains[d[j]] = true; domainCount++; }
-        }
+        for (var j = 0; j < d.length; j++) domains[d[j]] = true;
     }
-    return { oldest_age: oldest, stuck: stuck, stuck_domains: domainCount };
+    return { oldest_age: oldest, stuck: stuck, stuck_domains: Object.keys(domains).length };
 }
 
 return withSession('Zabbix Queue', function () {
     var r = batchCall([
         { method: 'Server.getServerTime', params: {} },
-        // shortcut: the oldest 500 entries only; a bigger queue already fires the stuck-domains trigger.
+        // shortcut: the oldest 500 entries only (a bigger queue fires the stuck-domains trigger anyway); page through totalItems if a per-message count above 500 is ever needed.
         { method: 'Queue.get', params: { query: { start: 0, limit: 500, orderBy: [{ columnName: 'creationTime', direction: 'Asc' }] } } }
     ]);
     return JSON.stringify(queueStats(r[1].list || [], r[0].info.currentTime, r[0].info.timezoneOffset, seconds(params.stuck_age)));

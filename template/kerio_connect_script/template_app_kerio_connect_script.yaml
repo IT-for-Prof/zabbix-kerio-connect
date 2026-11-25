@@ -156,18 +156,15 @@ zabbix_export:
         }
 
         function withSession(appName, body) {
+            token = apiCall('Session.login', {
+                userName: params.username,
+                password: params.password,
+                application: { name: appName, vendor: 'Zabbix', version: '7.0' }
+            }).token;
             try {
-                token = apiCall('Session.login', {
-                    userName: params.username,
-                    password: params.password,
-                    application: { name: appName, vendor: 'Zabbix', version: '7.0' }
-                }).token;
-                var result = body();
+                return body();
+            } finally {
                 try { apiCall('Session.logout'); } catch (e) {}
-                return result;
-            } catch (e) {
-                try { apiCall('Session.logout'); } catch (x) {}
-                throw e;
             }
         }
 
@@ -192,7 +189,6 @@ zabbix_export:
             return +m[1] * { '': 1, s: 1, m: 60, h: 3600, d: 86400, w: 604800 }[m[2]];
         }
 
-        // master_collector.js - Zabbix Script item (Duktape engine), prefixed with kerio_api.js
         return withSession('Zabbix Monitoring', function () {
             var r = batchCall([
                 { method: 'Statistics.get', params: {} },
@@ -404,18 +400,15 @@ zabbix_export:
         }
 
         function withSession(appName, body) {
+            token = apiCall('Session.login', {
+                userName: params.username,
+                password: params.password,
+                application: { name: appName, vendor: 'Zabbix', version: '7.0' }
+            }).token;
             try {
-                token = apiCall('Session.login', {
-                    userName: params.username,
-                    password: params.password,
-                    application: { name: appName, vendor: 'Zabbix', version: '7.0' }
-                }).token;
-                var result = body();
+                return body();
+            } finally {
                 try { apiCall('Session.logout'); } catch (e) {}
-                return result;
-            } catch (e) {
-                try { apiCall('Session.logout'); } catch (x) {}
-                throw e;
             }
         }
 
@@ -440,8 +433,6 @@ zabbix_export:
             return +m[1] * { '': 1, s: 1, m: 60, h: 3600, d: 86400, w: 604800 }[m[2]];
         }
 
-        // queue_collector.js - Zabbix Script item (Duktape engine), prefixed with kerio_api.js.
-        // Returns aggregates only: queue entries carry customer addresses, which must not reach history.
         function recipientDomains(to) {
             var out = [];
             var parts = String(to || '').split(/[,;\s]+/);
@@ -453,7 +444,7 @@ zabbix_export:
         }
 
         function queueStats(list, now, offsetMinutes, stuckAge) {
-            var oldest = 0, stuck = 0, domains = {}, domainCount = 0;
+            var oldest = 0, stuck = 0, domains = {};
             for (var i = 0; i < list.length; i++) {
                 var created = serverTime(list[i].creationTime || '', offsetMinutes);
                 if (created === null) continue;
@@ -462,17 +453,15 @@ zabbix_export:
                 if (!/^4\./.test(list[i].status || '') || age <= stuckAge) continue;
                 stuck++;
                 var d = recipientDomains(list[i].to);
-                for (var j = 0; j < d.length; j++) {
-                    if (!domains[d[j]]) { domains[d[j]] = true; domainCount++; }
-                }
+                for (var j = 0; j < d.length; j++) domains[d[j]] = true;
             }
-            return { oldest_age: oldest, stuck: stuck, stuck_domains: domainCount };
+            return { oldest_age: oldest, stuck: stuck, stuck_domains: Object.keys(domains).length };
         }
 
         return withSession('Zabbix Queue', function () {
             var r = batchCall([
                 { method: 'Server.getServerTime', params: {} },
-                // shortcut: the oldest 500 entries only; a bigger queue already fires the stuck-domains trigger.
+                // shortcut: the oldest 500 entries only (a bigger queue fires the stuck-domains trigger anyway); page through totalItems if a per-message count above 500 is ever needed.
                 { method: 'Queue.get', params: { query: { start: 0, limit: 500, orderBy: [{ columnName: 'creationTime', direction: 'Asc' }] } } }
             ]);
             return JSON.stringify(queueStats(r[1].list || [], r[0].info.currentTime, r[0].info.timezoneOffset, seconds(params.stuck_age)));
@@ -644,18 +633,15 @@ zabbix_export:
         }
 
         function withSession(appName, body) {
+            token = apiCall('Session.login', {
+                userName: params.username,
+                password: params.password,
+                application: { name: appName, vendor: 'Zabbix', version: '7.0' }
+            }).token;
             try {
-                token = apiCall('Session.login', {
-                    userName: params.username,
-                    password: params.password,
-                    application: { name: appName, vendor: 'Zabbix', version: '7.0' }
-                }).token;
-                var result = body();
+                return body();
+            } finally {
                 try { apiCall('Session.logout'); } catch (e) {}
-                return result;
-            } catch (e) {
-                try { apiCall('Session.logout'); } catch (x) {}
-                throw e;
             }
         }
 
@@ -680,13 +666,12 @@ zabbix_export:
             return +m[1] * { '': 1, s: 1, m: 60, h: 3600, d: 86400, w: 604800 }[m[2]];
         }
 
-        // relay_collector.js - Zabbix Script item (Duktape engine), prefixed with kerio_api.js.
         // Counts unauthenticated SMTP from private addresses to external recipients in the last hour of
         // the mail log: a sign of SNAT on the path to Kerio, which makes "Local clients" an open relay.
         var PRIVATE = /^(10(\.\d{1,3}){3}|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2}|192\.168(\.\d{1,3}){2})$/;
         // Recv fields: Queue-ID, Service, From, To, Size, Sender-Host, [User], [SSL], [Subject], [Msg-Id].
         var SENDER = /, Size: \d+, Sender-Host: ([^,]+)(, User: [^,]*)?(?=, SSL: |, Subject: |, Msg-Id: |$)/g;
-        var WINDOW = 3600; // item delay: each run counts only lines newer than one interval
+        var WINDOW = 3600; // equals the item delay (tests/test_templates.py): runs neither overlap nor leave gaps
 
         // From, To and Subject are sender-controlled and may imitate the Size/Sender-Host run, so every
         // candidate counts: an injected fake can raise a false alarm but cannot hide the real sender.
@@ -1341,18 +1326,15 @@ zabbix_export:
         }
 
         function withSession(appName, body) {
+            token = apiCall('Session.login', {
+                userName: params.username,
+                password: params.password,
+                application: { name: appName, vendor: 'Zabbix', version: '7.0' }
+            }).token;
             try {
-                token = apiCall('Session.login', {
-                    userName: params.username,
-                    password: params.password,
-                    application: { name: appName, vendor: 'Zabbix', version: '7.0' }
-                }).token;
-                var result = body();
+                return body();
+            } finally {
                 try { apiCall('Session.logout'); } catch (e) {}
-                return result;
-            } catch (e) {
-                try { apiCall('Session.logout'); } catch (x) {}
-                throw e;
             }
         }
 
@@ -1377,7 +1359,6 @@ zabbix_export:
             return +m[1] * { '': 1, s: 1, m: 60, h: 3600, d: 86400, w: 604800 }[m[2]];
         }
 
-        // lld_services.js - Zabbix Script item for service LLD (Duktape engine), prefixed with kerio_api.js
         return withSession('Zabbix LLD', function () {
             var list = apiCall('Services.get').services || [];
             var out = [];

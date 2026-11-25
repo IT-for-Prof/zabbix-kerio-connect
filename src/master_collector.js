@@ -1,4 +1,3 @@
-// master_collector.js - Zabbix Script item (Duktape engine), prefixed with kerio_api.js
 return withSession('Zabbix Monitoring', function () {
     var r = batchCall([
         { method: 'Statistics.get', params: {} },

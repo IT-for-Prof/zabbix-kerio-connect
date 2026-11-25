@@ -1,10 +1,9 @@
-// relay_collector.js - Zabbix Script item (Duktape engine), prefixed with kerio_api.js.
 // Counts unauthenticated SMTP from private addresses to external recipients in the last hour of
 // the mail log: a sign of SNAT on the path to Kerio, which makes "Local clients" an open relay.
 var PRIVATE = /^(10(\.\d{1,3}){3}|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2}|192\.168(\.\d{1,3}){2})$/;
 // Recv fields: Queue-ID, Service, From, To, Size, Sender-Host, [User], [SSL], [Subject], [Msg-Id].
 var SENDER = /, Size: \d+, Sender-Host: ([^,]+)(, User: [^,]*)?(?=, SSL: |, Subject: |, Msg-Id: |$)/g;
-var WINDOW = 3600; // item delay: each run counts only lines newer than one interval
+var WINDOW = 3600; // equals the item delay (tests/test_templates.py): runs neither overlap nor leave gaps
 
 // From, To and Subject are sender-controlled and may imitate the Size/Sender-Host run, so every
 // candidate counts: an injected fake can raise a false alarm but cannot hide the real sender.
