@@ -13,8 +13,8 @@ zabbix_export:
     description: |-
       Zabbix 7 templates for monitoring Kerio Connect via JSON-RPC Admin API.
 
-      Monitors Kerio Connect mail server via its JSON-RPC Admin API,
-      called by a Zabbix agent UserParameter that runs kerio_collector.py.
+      A Zabbix agent UserParameter runs kerio_collector.py, which calls the
+      Kerio Connect mail server API.
       Credentials live in a local config file (default
       /etc/zabbix/kerio_connect.conf) — not in zabbix_agent2.conf, where
       host macros are not expanded.
@@ -28,7 +28,7 @@ zabbix_export:
     macros:
     - macro: '{$KERIO.AGENT.CONFIG}'
       value: /etc/zabbix/kerio_connect.conf
-      description: 'Informational: path the agent UserParameter reads. Not consumed by the template; change the UserParameter to relocate.'
+      description: 'Reference only: the path the agent UserParameter reads. The template does not use this macro; to move the file, edit the UserParameter.'
     - macro: '{$KERIO.QUEUE.WARN}'
       value: '100'
       description: Queue depth warning threshold (messages).
@@ -58,7 +58,7 @@ zabbix_export:
       value_type: TEXT
       description: 'Master item. UserParameter on the agent runs kerio_collector.py and
 
-        returns a JSON blob with four top-level keys: statistics, services,
+        returns a JSON object with four top-level keys: statistics, services,
 
         license, server. All other items derive from this via JSONPath.
 
@@ -159,7 +159,7 @@ zabbix_export:
         - tag: scope
           value: capacity
         manual_close: 'YES'
-        description: 'Mail store disk usage exceeded {$KERIO.DISK.DISASTER}% (current: {ITEM.VALUE1}). Kerio Connect stops accepting messages at full disk — free space NOW.'
+        description: 'Mail store disk usage exceeded {$KERIO.DISK.DISASTER}% (current: {ITEM.VALUE1}). Kerio Connect stops accepting messages at full disk — free space now.'
         dependencies:
         - *id001
     - uuid: 22ee1298f8b2413ca76559bc0d0a67a8
@@ -528,7 +528,7 @@ zabbix_export:
         - tag: scope
           value: security
         manual_close: 'YES'
-        description: One or more infected attachments were detected. Check Kerio Connect antivirus logs.
+        description: Antivirus found infected attachments. Check Kerio Connect antivirus logs.
         dependencies:
         - *id001
     - uuid: 3346ab29f5ff407984abae99836b3821
@@ -689,6 +689,6 @@ zabbix_export:
           - tag: scope
             value: availability
           manual_close: 'YES'
-          description: 'Kerio service with start type Automatic is not running. Manual-start services are not alerted (their status item is still collected). If you want to stop alerting on an Automatic service, set its start type to Manual in Kerio.'
+          description: 'Kerio service with start type Automatic is not running. Manual-start services do not alert; their status item is still collected. To stop alerts for an Automatic service, set its start type to Manual in Kerio.'
           dependencies:
           - *id001

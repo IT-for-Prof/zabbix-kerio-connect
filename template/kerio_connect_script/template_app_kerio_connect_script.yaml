@@ -13,16 +13,14 @@ zabbix_export:
     description: 'Zabbix 7 templates for monitoring Kerio Connect via JSON-RPC Admin API.
 
 
-      Monitors Kerio Connect mail server via its JSON-RPC Admin API.
-
-      Zabbix server/proxy calls the API directly — no agent required.
+      The Zabbix server or proxy calls the Kerio Connect mail server API directly; no agent is required.
 
 
-      CPU, memory, swap, and per-domain metrics are intentionally omitted —
+      The template does not collect CPU, memory, swap or per-domain metrics:
 
-      the underlying API methods are not available to the Auditor role.
+      the Auditor role cannot call the API methods behind them.
 
-      For OS-level metrics, link a Windows/Linux OS template alongside.
+      For OS metrics, link a Windows or Linux OS template to the same host.
 
 
       Author:  Konstantin Tyutyunnik / Константин Тютюнник
@@ -84,7 +82,7 @@ zabbix_export:
       trends: '0'
       timeout: 30s
       value_type: TEXT
-      description: 'Master item. Calls Kerio Connect JSON-RPC API and returns a JSON blob
+      description: 'Master item. Calls Kerio Connect JSON-RPC API and returns a JSON object
 
         with four top-level keys: statistics, services, license, server.
 
@@ -289,7 +287,7 @@ zabbix_export:
         - tag: scope
           value: capacity
         manual_close: 'YES'
-        description: 'Mail store disk usage exceeded {$KERIO.DISK.DISASTER}% (current: {ITEM.VALUE1}). Kerio Connect stops accepting messages at full disk — free space NOW.'
+        description: 'Mail store disk usage exceeded {$KERIO.DISK.DISASTER}% (current: {ITEM.VALUE1}). Kerio Connect stops accepting messages at full disk — free space now.'
         dependencies:
         - name: 'Kerio Connect: API data collection failed'
           expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
@@ -741,7 +739,7 @@ zabbix_export:
         - tag: scope
           value: security
         manual_close: 'YES'
-        description: Logs.get or Domains.get has not returned data for 3 hours; unauthenticated relay is not being watched.
+        description: Logs.get or Domains.get has not returned data for 3 hours; nothing checks for unauthenticated relay.
         dependencies:
         - name: 'Kerio Connect: API data collection failed'
           expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
@@ -1207,7 +1205,7 @@ zabbix_export:
         - tag: scope
           value: security
         manual_close: 'YES'
-        description: One or more infected attachments were detected. Check Kerio Connect antivirus logs.
+        description: Antivirus found infected attachments. Check Kerio Connect antivirus logs.
         dependencies:
         - *id001
     - uuid: 9ceebe8ed00c460fb15b1c1001db0872
@@ -1469,6 +1467,6 @@ zabbix_export:
           - tag: scope
             value: availability
           manual_close: 'YES'
-          description: Kerio service with start type Automatic is not running. Manual-start services are not alerted (their status item is still collected). If you want to stop alerting on an Automatic service, set its start type to Manual in Kerio.
+          description: Kerio service with start type Automatic is not running. Manual-start services do not alert; their status item is still collected. To stop alerts for an Automatic service, set its start type to Manual in Kerio.
           dependencies:
           - *id001

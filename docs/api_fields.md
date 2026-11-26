@@ -130,8 +130,8 @@ Response path: `result.services` (array)
 `howToStart` is a **string**, observed values `Automatic` / `Manual` (a service's
 start type in Kerio). The service-discovery LLD emits it as `{#STARTTYPE}`
 alongside `{#SERVICE}`. The "service is not running" trigger is gated with
-`… and "{#STARTTYPE}"="Automatic"`, so Manual-start services (intentionally
-stopped) keep a status item but never alert — no per-host exclude list.
+`… and "{#STARTTYPE}"="Automatic"`, so Manual-start services (stopped on purpose)
+keep a status item but never alert, and no per-host exclude list is needed.
 
 ---
 
@@ -172,7 +172,7 @@ Response path: `result.status`
 - `expirations[0].date` is a **Unix timestamp integer** — expiry date
 - `expirations[0].remainingDays` is an **integer** — days until expiry
 - `expirations[0].type` is `"License"` or `"Subscription"`
-- Confirmed working with **Auditor role** (contrary to earlier failed `ProductRegistration.get` attempt — `getFullStatus` is the correct method name)
+- Works with the **Auditor role**. The method is `getFullStatus`; an earlier attempt with `ProductRegistration.get` failed
 
 ---
 

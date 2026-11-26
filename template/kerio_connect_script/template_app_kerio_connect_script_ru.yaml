@@ -13,9 +13,7 @@ zabbix_export:
     description: 'Шаблоны Zabbix 7 для мониторинга Kerio Connect через JSON-RPC Admin API.
 
 
-      Шаблон следит за почтовым сервером Kerio Connect через его JSON-RPC Admin API.
-
-      API вызывает сам сервер или прокси Zabbix, агент не нужен.
+      Сервер или прокси Zabbix сам вызывает API почтового сервера Kerio Connect, агент не нужен.
 
 
       Процессор, память, swap и метрики по доменам шаблон не собирает:
@@ -1207,7 +1205,7 @@ zabbix_export:
         - tag: scope
           value: security
         manual_close: 'YES'
-        description: Найдено одно или несколько заражённых вложений. Проверьте журналы антивируса Kerio Connect.
+        description: Антивирус нашёл заражённые вложения. Проверьте журналы антивируса Kerio Connect.
         dependencies:
         - *id001
     - uuid: 9ceebe8ed00c460fb15b1c1001db0872

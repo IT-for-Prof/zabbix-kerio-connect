@@ -140,7 +140,7 @@ template. The `by Script` template cannot run that check: it executes on the Zab
 sees their way out to the Internet, not the mail machine's.
 
 Every trigger except the master *no-data* trigger **depends** on "API data
-collection failed". When the API goes down only that single root alert fires.
+collection failed". When the API goes down, only that root alert fires.
 
 ```mermaid
 flowchart LR
@@ -228,13 +228,13 @@ Restart the agent and link the template to the host.
 
 ## Which services alert
 
-The "service is not running" trigger is created **only for services with start
+The "service is not running" trigger fires **only for services with start
 type Automatic**. The start type comes from the Kerio API `howToStart` field,
 exposed as the LLD macro `{#STARTTYPE}`; the trigger expression fires only when
 `{#STARTTYPE}="Automatic"`, so Manual-start services keep their trigger but it
 never goes off.
 
-Manual-start services are intentionally stopped, so they never alert — but their
+Manual-start services are stopped on purpose, so they never alert; their
 status metric (`kerio.service.status[…]`) is still collected. To stop alerting
 on an Automatic service, set its start type to Manual in Kerio itself; there is
 no hand-maintained exclude list in Zabbix.
@@ -242,7 +242,7 @@ no hand-maintained exclude list in Zabbix.
 ## Installation
 
 1. Create a Kerio Admin service user with the **Auditor** role (Admin works
-   too, but Auditor is the minimum).
+   too, but Auditor is enough).
 2. Import the YAML template in Zabbix, either the English or the Russian version:
    `Configuration → Templates → Import`.
 3. Link the template to the host and set the macros.
