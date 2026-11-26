@@ -7,7 +7,9 @@ import yaml
 
 SCRIPT_TEMPLATE = Path("template/kerio_connect_script/template_app_kerio_connect_script.yaml")
 AGENT_TEMPLATE = Path("template/kerio_connect_agent/template_app_kerio_connect_agent.yaml")
-ALL_TEMPLATES = [SCRIPT_TEMPLATE, AGENT_TEMPLATE]
+# English file keeps its name (existing users import it); the Russian one sits next to it.
+LANGUAGE_PAIRS = [(path, path.with_name(path.stem + "_ru.yaml")) for path in (SCRIPT_TEMPLATE, AGENT_TEMPLATE)]
+ALL_TEMPLATES = [path for pair in LANGUAGE_PAIRS for path in pair]
 PROJECT_DESCRIPTION = "Zabbix 7 templates for monitoring Kerio Connect via JSON-RPC Admin API"
 PROJECT_URL = "https://github.com/IT-for-Prof/zabbix-kerio-connect"
 SCRIPT_ONLY_KEYS = {
@@ -34,7 +36,8 @@ def test_zabbix_version_is_7(path):
 @pytest.mark.parametrize("path", ALL_TEMPLATES)
 def test_template_description_contains_project_description_and_original_link(path):
     description = load_template(path)["zabbix_export"]["templates"][0]["description"]
-    assert PROJECT_DESCRIPTION in description
+    if not path.stem.endswith("_ru"):
+        assert PROJECT_DESCRIPTION in description
     assert PROJECT_URL in description
 
 
@@ -267,8 +270,10 @@ def test_disk_triggers_one_problem_per_state(path):
     high, disaster = disk
     assert "<={$KERIO.DISK.DISASTER}" in high["expression"]
     assert high["recovery_mode"] == "RECOVERY_EXPRESSION"
+    (api_failed,) = [t["name"] for item, t in triggers(path)
+                     if item["key"] == "kerio.api.master" and t["expression"].startswith("nodata(")]
     for t in disk:
-        assert [d["name"] for d in t["dependencies"]] == ["Kerio Connect: API data collection failed"]
+        assert [d["name"] for d in t["dependencies"]] == [api_failed]
 
 
 def test_relay_check_delay_matches_its_window():
@@ -282,3 +287,66 @@ def test_every_script_item_reports_lost_collection():
     for item in template["items"]:
         if item["type"] == "SCRIPT":
             assert any(t["expression"].startswith("nodata(") for t in item.get("triggers", [])), item["key"]
+
+
+def test_queue_stuck_domains_has_no_trigger():
+    # Removed in 1.3.0: the queue cannot tell a dead recipient from a broken outbound path
+    # (both 4.4.1); a broken path is caught by an active :25 probe on the mail host.
+    for path in (SCRIPT_TEMPLATE, SCRIPT_TEMPLATE.with_name(SCRIPT_TEMPLATE.stem + "_ru.yaml")):
+        template = load_template(path)["zabbix_export"]["templates"][0]
+        keys = {item["key"] for item in template["items"]}
+        assert {"kerio.queue.stuck", "kerio.queue.stuck.domains"} <= keys
+        assert not [t for _, t in triggers(path) if "kerio.queue.stuck.domains" in t["expression"]]
+        assert "{$KERIO.QUEUE.STUCK.DOMAINS}" not in path.read_text()
+
+
+@pytest.mark.parametrize("path", ALL_TEMPLATES)
+def test_dependencies_name_triggers_of_the_same_file(path):
+    # Dependency names are translated with the triggers; a stale English name breaks the import.
+    template = load_template(path)["zabbix_export"]["templates"][0]
+    all_triggers = [t for _, t in triggers(path)]
+    all_triggers += [t for rule in template.get("discovery_rules", []) for prototype in rule.get("item_prototypes", [])
+                     for t in prototype.get("trigger_prototypes", [])]
+    names = {t["name"] for t in all_triggers}
+    dependencies = [d["name"] for t in all_triggers for d in t.get("dependencies", [])]
+    assert dependencies and set(dependencies) <= names
+
+
+def _without_texts(node):
+    """Export without translated texts: descriptions, event names, opdata, names of items, rules,
+    triggers and trigger dependencies. Template, group and tag names stay."""
+    if isinstance(node, dict):
+        translated = "key" in node or "priority" in node or "expression" in node
+        return {k: _without_texts(v) for k, v in node.items()
+                if k not in ("description", "event_name", "opdata") and not (k == "name" and translated)}
+    if isinstance(node, list):
+        return [_without_texts(v) for v in node]
+    return node
+
+
+def _names(template):
+    rows = [(item, item.get("triggers", [])) for item in template.get("items", [])]
+    rows += [(prototype, prototype.get("trigger_prototypes", []))
+             for rule in template.get("discovery_rules", []) for prototype in rule.get("item_prototypes", [])]
+    names = [n["name"] for item, trigs in rows for n in [item, *trigs]]
+    return names + [rule["name"] for rule in template.get("discovery_rules", [])]
+
+
+@pytest.mark.parametrize("en, ru", LANGUAGE_PAIRS)
+def test_language_versions_differ_only_in_texts(en, ru):
+    # Shared UUIDs, keys, macros, groups and expressions: importing either version updates the installed template in place.
+    assert _without_texts(load_template(ru)) == _without_texts(load_template(en))
+    assert load_template(ru)["zabbix_export"]["templates"][0]["description"] != \
+        load_template(en)["zabbix_export"]["templates"][0]["description"]
+
+
+@pytest.mark.parametrize("en, ru", LANGUAGE_PAIRS)
+def test_english_version_has_no_russian_text(en, ru):
+    assert not [line for line in en.read_text().splitlines() if re.search("[а-яё]", line, re.I) and "Author:" not in line]
+
+
+@pytest.mark.parametrize("en, ru", LANGUAGE_PAIRS)
+def test_russian_version_names_are_russian(en, ru):
+    names = _names(load_template(ru)["zabbix_export"]["templates"][0])
+    assert names
+    assert not [n for n in names if not re.search("[а-яё]", n, re.I)]

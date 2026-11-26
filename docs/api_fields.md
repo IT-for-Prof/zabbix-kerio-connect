@@ -89,6 +89,9 @@ Response path: `result.statistics`
 - `storage.percentage` is a **string** (e.g., `"92"`)
 - `uptime.days` is an **integer**
 - All connection counts are **cumulative since server start** (not active/current)
+- `transmitted.count` = `deliveredToLocals.count` + `mx.count` + `relay.count` (checked on three live servers: the sum
+  matches within 1–3 messages). It includes local delivery, so `kerio.smtp.messages.out` does not measure mail
+  leaving the server. On a server that delivers straight to recipient MX (`relay.count` = 0), external delivery is `mx.count`
 
 ---
 
@@ -127,8 +130,8 @@ Response path: `result.services` (array)
 `howToStart` is a **string**, observed values `Automatic` / `Manual` (a service's
 start type in Kerio). The service-discovery LLD emits it as `{#STARTTYPE}`
 alongside `{#SERVICE}`. The "service is not running" trigger is gated with
-`… and "{#STARTTYPE}"="Automatic"`, so Manual-start services (intentionally
-stopped) keep a status item but never alert — no per-host exclude list.
+`… and "{#STARTTYPE}"="Automatic"`, so Manual-start services (stopped on purpose)
+keep a status item but never alert, and no per-host exclude list is needed.
 
 ---
 
@@ -169,7 +172,7 @@ Response path: `result.status`
 - `expirations[0].date` is a **Unix timestamp integer** — expiry date
 - `expirations[0].remainingDays` is an **integer** — days until expiry
 - `expirations[0].type` is `"License"` or `"Subscription"`
-- Confirmed working with **Auditor role** (contrary to earlier failed `ProductRegistration.get` attempt — `getFullStatus` is the correct method name)
+- Works with the **Auditor role**. The method is `getFullStatus`; an earlier attempt with `ProductRegistration.get` failed
 
 ---
 
@@ -214,6 +217,9 @@ Server local time = UTC + `timezoneOffset` minutes. Queue and log timestamps are
 `result = {"list": [...], "totalItems": N, "volume": {...}}`, entry:
 `{"id", "creationTime": "YYYY-MM-DD HH:MM", "nextTry": "YYYY-MM-DD HH:MM", "messageSize", "from", "to", "status": "4.4.1 Cannot connect to host", "authSender", "senderIp"}`.
 Entries carry customer addresses: the template returns aggregates only.
+`status` is the only error field: there is no remote host or attempt count. `4.4.1 Cannot connect to host` looks the
+same for a dead recipient server and for a blocked outbound path. A DNS failure in Kerio is `5.5.4 Cannot find hostname
+in DNS`, a permanent error: the message leaves the queue, so the stuck counters never see it.
 
 ### Logs.get
 ```json

@@ -5,6 +5,13 @@ JSON-RPC Admin API.
 
 📕 [Русская версия](README.md) • 🌐 [itforprof.com](https://itforprof.com)
 
+Each template comes in two versions. This file describes the English one,
+`template/kerio_connect_script/template_app_kerio_connect_script.yaml` and
+`template/kerio_connect_agent/template_app_kerio_connect_agent.yaml`. The Russian version sits next to
+them in the same files with `_ru` added, described in [README.md](README.md). The versions share UUIDs,
+keys, macros and the template name, so importing either one updates an installed template in place and
+keeps its history. A server runs one of the two.
+
 ---
 
 ## Architecture
@@ -75,8 +82,7 @@ Auditor `Domains.get` returns domain names (field `name`) only; the relay check
 uses them.
 
 Queue items return aggregates only: addresses from `Queue.get` never reach
-Zabbix history. Only the oldest 500 messages are evaluated: if they all go to one
-or two domains, "Outbound delivery failing" stays quiet even while fresh mail piles up behind them.
+Zabbix history. Only the oldest 500 messages are evaluated.
 
 ## Triggers
 
@@ -88,10 +94,6 @@ or two domains, "Outbound delivery failing" stays quiet even while fresh mail pi
   one state, one problem. 80/90 % come from the OS template (file system
   triggers on the store volume); the Kerio template does not duplicate them.
 - ⚠️ **High message queue depth** — queue size above `{$KERIO.QUEUE.WARN}`.
-- 🟧 **Outbound delivery failing** (`by Script` only) — messages with a temporary
-  `4.x.x` status older than `{$KERIO.QUEUE.STUCK.AGE}` (1h) wait for at least
-  `{$KERIO.QUEUE.STUCK.DOMAINS}` (3) recipient domains. One dead recipient does
-  not raise it; a broken outbound path (relay, NAT, DNS, port 25) does.
 - ⚠️ **Message queued longer than {$KERIO.QUEUE.AGE.HIGH}** (`by Script` only) —
   the oldest message waits longer than 24h. Usually a dead recipient server;
   the problem clears when Kerio returns the message to the sender
@@ -123,8 +125,22 @@ or two domains, "Outbound delivery failing" stays quiet even while fresh mail pi
 - ⚠️ **License expires in less than 30 days** — renew soon.
 - 🔴 **Service `{#SERVICE}` is not running** — a discovered service is stopped.
 
+### Why there is no trigger for broken outbound mail
+
+Version 1.3.0 removes the "Outbound delivery failing" trigger. It fired when messages with a temporary
+`4.x.x` status were stuck for several domains at once. The queue cannot tell a dead recipient from a
+broken outbound path: both show `4.4.1 Cannot connect to host`. A mailing to a few dead addresses
+therefore raised a false alarm. The send counters do not help either: `transmitted` includes local delivery, and
+external delivery (`mx`) often has quiet hours. The `kerio.queue.stuck` and `kerio.queue.stuck.domains`
+items stay for graphs. The "Message queued longer than {$KERIO.QUEUE.AGE.HIGH}" trigger still shows dead recipients.
+
+A broken outbound path (port 25, NAT, the machine's DNS) is caught by an active port 25 probe from the
+mail machine itself: the [Windows SMTP egress by Zabbix agent active](https://github.com/IT-for-Prof/zabbix-smtp-egress)
+template. The `by Script` template cannot run that check: it executes on the Zabbix server or proxy and
+sees their way out to the Internet, not the mail machine's.
+
 Every trigger except the master *no-data* trigger **depends** on "API data
-collection failed". When the API goes down only that single root alert fires.
+collection failed". When the API goes down, only that root alert fires.
 
 ```mermaid
 flowchart LR
@@ -132,7 +148,6 @@ flowchart LR
     R --> D3["🔴 Disk > HIGH% (95..99)"]
     R --> D4["💀 Disk > DISASTER% (99)"]
     R --> Q["⚠️ High queue depth"]
-    R --> QS["🟧 Outbound delivery failing"]
     R --> QA["⚠️ Message queued > 24h"]
     R --> RL["🟧 Unauthenticated relay"]
     R --> OR["🔴 Open relay"]
@@ -179,7 +194,6 @@ Queue and relay thresholds (defaults fit most servers):
 | Macro | Default | Meaning |
 |---|---|---|
 | `{$KERIO.QUEUE.STUCK.AGE}` | `1h` | age after which a `4.x.x` message counts as stuck |
-| `{$KERIO.QUEUE.STUCK.DOMAINS}` | `3` | how many domains with stuck messages mean outbound delivery is failing |
 | `{$KERIO.QUEUE.AGE.HIGH}` | `24h` | oldest message age for the Warning |
 | `{$KERIO.LOG.LINES}` | `5000` | how many last `mail` log lines the relay check reads |
 | `{$KERIO.RELAY.UNAUTH.ALLOW}` | empty | regex of private addresses allowed to relay without authentication (matched against the whole address) |
@@ -214,13 +228,13 @@ Restart the agent and link the template to the host.
 
 ## Which services alert
 
-The "service is not running" trigger is created **only for services with start
+The "service is not running" trigger fires **only for services with start
 type Automatic**. The start type comes from the Kerio API `howToStart` field,
 exposed as the LLD macro `{#STARTTYPE}`; the trigger expression fires only when
 `{#STARTTYPE}="Automatic"`, so Manual-start services keep their trigger but it
 never goes off.
 
-Manual-start services are intentionally stopped, so they never alert — but their
+Manual-start services are stopped on purpose, so they never alert; their
 status metric (`kerio.service.status[…]`) is still collected. To stop alerting
 on an Automatic service, set its start type to Manual in Kerio itself; there is
 no hand-maintained exclude list in Zabbix.
@@ -228,8 +242,8 @@ no hand-maintained exclude list in Zabbix.
 ## Installation
 
 1. Create a Kerio Admin service user with the **Auditor** role (Admin works
-   too, but Auditor is the minimum).
-2. Import the YAML template in Zabbix:
+   too, but Auditor is enough).
+2. Import the YAML template in Zabbix, either the English or the Russian version:
    `Configuration → Templates → Import`.
 3. Link the template to the host and set the macros.
 4. After one minute, check `Monitoring → Latest data` — disk, license,
@@ -255,4 +269,4 @@ Detailed field/JSONPath reference: [docs/api_fields.md](docs/api_fields.md).
 Author: **Konstantin Tyutyunnik** (Константин Тютюнник) ·
 [itforprof.com](https://itforprof.com)
 
-Template version: **1.0.0**
+Template version: **1.3.0**

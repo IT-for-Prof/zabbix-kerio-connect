@@ -9,20 +9,18 @@ zabbix_export:
     name: Kerio Connect by Script
     vendor:
       name: itforprof.com
-      version: 1.2.0
+      version: 1.3.0
     description: 'Zabbix 7 templates for monitoring Kerio Connect via JSON-RPC Admin API.
 
 
-      Monitors Kerio Connect mail server via its JSON-RPC Admin API.
-
-      Zabbix server/proxy calls the API directly — no agent required.
+      The Zabbix server or proxy calls the Kerio Connect mail server API directly; no agent is required.
 
 
-      CPU, memory, swap, and per-domain metrics are intentionally omitted —
+      The template does not collect CPU, memory, swap or per-domain metrics:
 
-      the underlying API methods are not available to the Auditor role.
+      the Auditor role cannot call the API methods behind them.
 
-      For OS-level metrics, link a Windows/Linux OS template alongside.
+      For OS metrics, link a Windows or Linux OS template to the same host.
 
 
       Author:  Konstantin Tyutyunnik / Константин Тютюнник
@@ -60,9 +58,6 @@ zabbix_export:
     - macro: '{$KERIO.QUEUE.STUCK.AGE}'
       value: 1h
       description: Age after which a message with a 4.x.x (temporary) status counts as stuck.
-    - macro: '{$KERIO.QUEUE.STUCK.DOMAINS}'
-      value: '3'
-      description: Stuck messages to at least this many recipient domains mean outbound delivery is failing, not one dead recipient.
     - macro: '{$KERIO.QUEUE.AGE.HIGH}'
       value: 24h
       description: Oldest queued message age that raises a warning. It clears when Kerio bounces the message (Smtp.get bounceInterval).
@@ -87,7 +82,7 @@ zabbix_export:
       trends: '0'
       timeout: 30s
       value_type: TEXT
-      description: 'Master item. Calls Kerio Connect JSON-RPC API and returns a JSON blob
+      description: 'Master item. Calls Kerio Connect JSON-RPC API and returns a JSON object
 
         with four top-level keys: statistics, services, license, server.
 
@@ -292,7 +287,7 @@ zabbix_export:
         - tag: scope
           value: capacity
         manual_close: 'YES'
-        description: 'Mail store disk usage exceeded {$KERIO.DISK.DISASTER}% (current: {ITEM.VALUE1}). Kerio Connect stops accepting messages at full disk — free space NOW.'
+        description: 'Mail store disk usage exceeded {$KERIO.DISK.DISASTER}% (current: {ITEM.VALUE1}). Kerio Connect stops accepting messages at full disk — free space now.'
         dependencies:
         - name: 'Kerio Connect: API data collection failed'
           expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
@@ -461,7 +456,7 @@ zabbix_export:
         return withSession('Zabbix Queue', function () {
             var r = batchCall([
                 { method: 'Server.getServerTime', params: {} },
-                // shortcut: the oldest 500 entries only, so stuck_domains is blind when they span fewer domains than the trigger needs; page through totalItems once several Queue.get in one Batch.run is verified live.
+                // shortcut: the oldest 500 entries only, so stuck and stuck_domains undercount a longer queue; page through totalItems once several Queue.get in one Batch.run is verified live.
                 { method: 'Queue.get', params: { query: { start: 0, limit: 500, orderBy: [{ columnName: 'creationTime', direction: 'Asc' }] } } }
             ]);
             return JSON.stringify(queueStats(r[1].list || [], r[0].info.currentTime, r[0].info.timezoneOffset, seconds(params.stuck_age)));
@@ -543,20 +538,6 @@ zabbix_export:
       tags:
       - tag: component
         value: queue
-      triggers:
-      - uuid: 2c2dd413a62c43a4ba5e7d4ed9210882
-        expression: last(/Kerio Connect by Script/kerio.queue.stuck.domains)>={$KERIO.QUEUE.STUCK.DOMAINS}
-        name: 'Kerio Connect: Outbound delivery failing'
-        event_name: 'Kerio Connect on {HOST.NAME}: messages older than {$KERIO.QUEUE.STUCK.AGE} stuck for {ITEM.LASTVALUE1} recipient domains'
-        priority: AVERAGE
-        tags:
-        - tag: scope
-          value: availability
-        manual_close: 'YES'
-        description: Messages with a temporary (4.x.x) status older than {$KERIO.QUEUE.STUCK.AGE} wait for at least {$KERIO.QUEUE.STUCK.DOMAINS} different recipient domains. One dead recipient does not trigger this; a broken outbound path (relay, NAT, DNS, blocked port 25) does.
-        dependencies:
-        - name: 'Kerio Connect: API data collection failed'
-          expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
     - uuid: 1f0cf68cb77b4d86a08e08a3a3472fe9
       name: 'Kerio Connect: Get relay check data'
       type: SCRIPT
@@ -758,7 +739,7 @@ zabbix_export:
         - tag: scope
           value: security
         manual_close: 'YES'
-        description: Logs.get or Domains.get has not returned data for 3 hours; unauthenticated relay is not being watched.
+        description: Logs.get or Domains.get has not returned data for 3 hours; nothing checks for unauthenticated relay.
         dependencies:
         - name: 'Kerio Connect: API data collection failed'
           expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
@@ -1224,7 +1205,7 @@ zabbix_export:
         - tag: scope
           value: security
         manual_close: 'YES'
-        description: One or more infected attachments were detected. Check Kerio Connect antivirus logs.
+        description: Antivirus found infected attachments. Check Kerio Connect antivirus logs.
         dependencies:
         - *id001
     - uuid: 9ceebe8ed00c460fb15b1c1001db0872
@@ -1486,6 +1467,6 @@ zabbix_export:
           - tag: scope
             value: availability
           manual_close: 'YES'
-          description: Kerio service with start type Automatic is not running. Manual-start services are not alerted (their status item is still collected). If you want to stop alerting on an Automatic service, set its start type to Manual in Kerio.
+          description: Kerio service with start type Automatic is not running. Manual-start services do not alert; their status item is still collected. To stop alerts for an Automatic service, set its start type to Manual in Kerio.
           dependencies:
           - *id001

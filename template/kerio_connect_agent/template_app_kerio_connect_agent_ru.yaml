@@ -1,0 +1,702 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+  - uuid: 3fb6f3365c5d4134bb04994517f4dc0b
+    name: Templates/Applications
+  templates:
+  - uuid: fee3cbf6d37940ff993fe8c93a312102
+    template: Kerio Connect by Zabbix agent
+    name: Kerio Connect by Zabbix agent
+    vendor:
+      name: itforprof.com
+      version: 1.3.0
+    description: 'Шаблоны Zabbix 7 для мониторинга Kerio Connect через JSON-RPC Admin API.
+
+
+      UserParameter агента Zabbix запускает kerio_collector.py, а тот вызывает
+
+      API почтового сервера Kerio Connect.
+
+      Учётные данные лежат в локальном файле (по умолчанию
+
+      /etc/zabbix/kerio_connect.conf), а не в zabbix_agent2.conf:
+
+      макросы хоста там не раскрываются.
+
+
+      Author:  Konstantin Tyutyunnik / Константин Тютюнник
+
+      Site:    https://itforprof.com
+
+      Repo:    https://github.com/IT-for-Prof/zabbix-kerio-connect
+
+      License: MIT (c) 2026 Konstantin Tyutyunnik'
+    groups:
+    - name: Templates/Applications
+    macros:
+    - macro: '{$KERIO.AGENT.CONFIG}'
+      value: /etc/zabbix/kerio_connect.conf
+      description: 'Для справки: путь, который читает UserParameter агента. Шаблон макрос не использует; чтобы перенести файл, поменяйте UserParameter.'
+    - macro: '{$KERIO.QUEUE.WARN}'
+      value: '100'
+      description: Порог длины очереди для предупреждения, писем.
+    - macro: '{$KERIO.DISK.HIGH}'
+      value: '95'
+      description: Критический порог занятого места на диске, %.
+    - macro: '{$KERIO.DISK.DISASTER}'
+      value: '99'
+      description: Порог Disaster для занятого места на диске, %. Выше него Kerio перестаёт принимать почту.
+    - macro: '{$KERIO.SMTP.AUTH.WARN}'
+      value: '1'
+      description: 'Порог для ошибок входа SMTP: сколько их в секунду в среднем за 5 минут. Одна в секунду без перерыва — это 300 попыток за 5 минут.'
+    tags:
+    - tag: class
+      value: application
+    - tag: target
+      value: kerio-connect
+    items:
+    - uuid: ee354faf552d46a184c5ed329f2b98d3
+      name: 'Kerio Connect: данные API'
+      type: ZABBIX_ACTIVE
+      key: kerio.api.master
+      delay: 1m
+      history: 1h
+      trends: '0'
+      timeout: 30s
+      value_type: TEXT
+      description: 'Главный элемент данных. UserParameter агента запускает kerio_collector.py и
+
+        возвращает JSON с четырьмя ключами верхнего уровня: statistics, services,
+
+        license, server. Остальные элементы берут из него значения через JSONPath.
+
+        Формат описан в docs/api_fields.md.
+
+        Нужен Timeout >= 30 в /etc/zabbix/zabbix_agent2.conf: вход и
+
+        4 вызова API по HTTPS легко выходят за таймаут по умолчанию в 3 секунды.
+
+        '
+      tags:
+      - tag: component
+        value: raw
+      triggers:
+      - uuid: 46fe429fc93342058e81dd82b40cd29f
+        expression: nodata(/Kerio Connect by Zabbix agent/kerio.api.master,5m)=1
+        name: 'Kerio Connect: данные API не собираются'
+        event_name: 'Kerio Connect на {HOST.NAME}: данные API не собираются (нет данных 5 мин)'
+        priority: AVERAGE
+        tags:
+        - tag: scope
+          value: availability
+        manual_close: 'YES'
+        description: Главный элемент данных ничего не получает 5 минут. Проверьте сетевой доступ к порту Kerio 4040 и учётные данные API.
+    - uuid: a067c2e9ffc04d48b1d441f6a5e8639d
+      name: 'Kerio Connect: занято на диске'
+      type: DEPENDENT
+      key: kerio.disk.used
+      delay: '0'
+      units: MB
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.storage.occupied.value
+      tags:
+      - tag: component
+        value: storage
+    - uuid: a25be4fdde314f33897b2f3dbf06cce9
+      name: 'Kerio Connect: размер диска'
+      type: DEPENDENT
+      key: kerio.disk.total
+      delay: '0'
+      units: MB
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.storage.total.value
+      tags:
+      - tag: component
+        value: storage
+    - uuid: 238b0411555a4d35ac1b6752485c1d16
+      name: 'Kerio Connect: занято на диске, %'
+      type: DEPENDENT
+      key: kerio.disk.pct
+      delay: '0'
+      value_type: FLOAT
+      units: '%'
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.storage.percentage
+      - type: REGEX
+        parameters:
+        - (\d+(?:\.\d+)?)
+        - \1
+      tags:
+      - tag: component
+        value: storage
+      triggers:
+      - uuid: b423fc1dc80648d1840aee786c16a531
+        expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.HIGH} and last(/Kerio Connect by Zabbix agent/kerio.disk.pct)<={$KERIO.DISK.DISASTER}
+        recovery_mode: RECOVERY_EXPRESSION
+        recovery_expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)<={$KERIO.DISK.HIGH} or last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.DISASTER}
+        name: 'Kerio Connect: диск занят больше чем на {$KERIO.DISK.HIGH}%'
+        event_name: 'Kerio Connect на {HOST.NAME}: хранилище почты заняло {ITEM.LASTVALUE1} (> {$KERIO.DISK.HIGH}%)'
+        priority: HIGH
+        tags:
+        - tag: scope
+          value: capacity
+        manual_close: 'YES'
+        description: Хранилище почты заняло больше {$KERIO.DISK.HIGH}% диска (сейчас {ITEM.VALUE1}). До порога Disaster {$KERIO.DISK.DISASTER}% ещё есть запас, но скоро ящики перестанут принимать письма. Освободите место сразу.
+        dependencies:
+        - &id001
+          name: 'Kerio Connect: данные API не собираются'
+          expression: nodata(/Kerio Connect by Zabbix agent/kerio.api.master,5m)=1
+      - uuid: 5c32830179d94d73828d571569fe4a13
+        expression: last(/Kerio Connect by Zabbix agent/kerio.disk.pct)>{$KERIO.DISK.DISASTER}
+        name: 'Kerio Connect: диск занят больше чем на {$KERIO.DISK.DISASTER}%'
+        event_name: 'Kerio Connect на {HOST.NAME}: хранилище почты заняло {ITEM.LASTVALUE1} (> {$KERIO.DISK.DISASTER}%), сервер перестаёт принимать почту'
+        priority: DISASTER
+        tags:
+        - tag: scope
+          value: capacity
+        manual_close: 'YES'
+        description: Хранилище почты заняло больше {$KERIO.DISK.DISASTER}% диска (сейчас {ITEM.VALUE1}). На полном диске Kerio Connect не принимает письма. Освободите место немедленно.
+        dependencies:
+        - *id001
+    - uuid: 22ee1298f8b2413ca76559bc0d0a67a8
+      name: 'Kerio Connect: писем в очереди'
+      type: DEPENDENT
+      key: kerio.queue.total
+      delay: '0'
+      value_type: UNSIGNED
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.storedInQueue.count
+      tags:
+      - tag: component
+        value: queue
+      triggers:
+      - uuid: caf2923264a046328febdf147ed0786c
+        expression: last(/Kerio Connect by Zabbix agent/kerio.queue.total)>{$KERIO.QUEUE.WARN}
+        name: 'Kerio Connect: длинная очередь писем'
+        event_name: 'Kerio Connect на {HOST.NAME}: в очереди {ITEM.LASTVALUE1} писем (> {$KERIO.QUEUE.WARN})'
+        priority: WARNING
+        tags:
+        - tag: scope
+          value: performance
+        manual_close: 'YES'
+        description: В очереди больше {$KERIO.QUEUE.WARN} писем (сейчас {ITEM.VALUE1}). Возможно, письма не доставляются или сбоит следующий сервер на пути.
+        dependencies:
+        - *id001
+    - uuid: e97b66d6261f44e288aed8d07d8fe98f
+      name: 'Kerio Connect: время работы, дней'
+      type: DEPENDENT
+      key: kerio.uptime.days
+      delay: '0'
+      value_type: UNSIGNED
+      units: d
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.uptime.days
+      tags:
+      - tag: component
+        value: health
+    - uuid: 32d56a0502b84214862238ce73e27f9c
+      name: 'Kerio Connect: подключения SMTP'
+      type: DEPENDENT
+      key: kerio.smtp.connections
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.smtpServer.totalIncomingConnections
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: smtp
+    - uuid: cdc9a6dbf6224300bf2ed0a7c27c336b
+      name: 'Kerio Connect: принято писем по SMTP'
+      type: DEPENDENT
+      key: kerio.smtp.messages.in
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.received.count
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: smtp
+    - uuid: a7f06e795058410895d036f2f2ac39ef
+      name: 'Kerio Connect: отправлено писем по SMTP'
+      type: DEPENDENT
+      key: kerio.smtp.messages.out
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.transmitted.count
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: smtp
+    - uuid: 3a4fcce64eb24df4846f79dc8556ea28
+      name: 'Kerio Connect: ошибки входа SMTP'
+      type: DEPENDENT
+      key: kerio.smtp.auth.failures
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.smtpServer.authenticationFailures
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: smtp
+      triggers:
+      - uuid: 2f0c9b1e5e844f8a92e178a3b1c4d5a2
+        expression: avg(/Kerio Connect by Zabbix agent/kerio.smtp.auth.failures,5m)>{$KERIO.SMTP.AUTH.WARN}
+        name: 'Kerio Connect: много ошибок входа SMTP'
+        event_name: 'Kerio Connect на {HOST.NAME}: ошибки входа SMTP {ITEM.LASTVALUE1}/с (> {$KERIO.SMTP.AUTH.WARN}/с)'
+        priority: WARNING
+        tags:
+        - tag: scope
+          value: security
+        manual_close: 'YES'
+        description: За последние 5 минут ошибок входа SMTP больше {$KERIO.SMTP.AUTH.WARN} в секунду. Это может быть подбор паролей или клиент с неверными настройками.
+        dependencies:
+        - *id001
+    - uuid: eacca0d798b64f25963081bcd0f63765
+      name: 'Kerio Connect: подключения IMAP'
+      type: DEPENDENT
+      key: kerio.imap.connections
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.imapServer.totalIncomingConnections
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: imap
+    - uuid: 18b92f296bbd4eaa9c6a1873dd6d5b1e
+      name: 'Kerio Connect: подключения POP3'
+      type: DEPENDENT
+      key: kerio.pop3.connections
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.pop3Server.totalIncomingConnections
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: pop3
+    - uuid: aa1aab544de64c00977177e4a2e86f93
+      name: 'Kerio Connect: подключения LDAP'
+      type: DEPENDENT
+      key: kerio.ldap.connections
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.ldapServer.totalIncomingConnections
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: ldap
+    - uuid: d8d84af00f4f44a3b331c89acff19450
+      name: 'Kerio Connect: веб-подключения'
+      type: DEPENDENT
+      key: kerio.web.connections
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.webServer.totalIncomingConnections
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: web
+    - uuid: ea545973df05461597b67b35a5768a9e
+      name: 'Kerio Connect: подключения XMPP'
+      type: DEPENDENT
+      key: kerio.xmpp.connections
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.xmppServer.totalIncomingConnections
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: xmpp
+    - uuid: f8d7531bd24c43a5a70e75c290fc0ff7
+      name: 'Kerio Connect: проверено на спам'
+      type: DEPENDENT
+      key: kerio.spam.checked
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.spam.checked
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: antispam
+    - uuid: 2d24db1b90a440ad9a9bbce34fb1ca75
+      name: 'Kerio Connect: отклонено как спам'
+      type: DEPENDENT
+      key: kerio.spam.rejected
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.spam.rejected
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: antispam
+    - uuid: d2e3c1c92435474e86e1b67692f171de
+      name: 'Kerio Connect: проверено антивирусом'
+      type: DEPENDENT
+      key: kerio.av.scanned
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.antivirus.checkedAttachments
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: antivirus
+    - uuid: 1b7eef2c2fda40109cfe134fb2c13eb4
+      name: 'Kerio Connect: заражённые письма'
+      type: DEPENDENT
+      key: kerio.av.infected
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.antivirus.foundViruses
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: antivirus
+      triggers:
+      - uuid: c4494ce53eaa4d9283a5ba55073019d6
+        expression: last(/Kerio Connect by Zabbix agent/kerio.av.infected)>0
+        name: 'Kerio Connect: антивирус нашёл заражённое вложение'
+        event_name: 'Kerio Connect на {HOST.NAME}: антивирус нашёл заражённые вложения: {ITEM.LASTVALUE1}'
+        priority: HIGH
+        tags:
+        - tag: scope
+          value: security
+        manual_close: 'YES'
+        description: Антивирус нашёл заражённые вложения. Проверьте журналы антивируса Kerio Connect.
+        dependencies:
+        - *id001
+    - uuid: 3346ab29f5ff407984abae99836b3821
+      name: 'Kerio Connect: отложено грейлистингом'
+      type: DEPENDENT
+      key: kerio.greylisting.delayed
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.greylisting.messagesDelayed
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: greylisting
+    - uuid: da5cb21e4667477b9c5a6e6340fbd453
+      name: 'Kerio Connect: отклонено антибомбингом'
+      type: DEPENDENT
+      key: kerio.antibombing.rejected
+      delay: '0'
+      value_type: FLOAT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.statistics.antibombing.rejectedConnections
+      - type: CHANGE_PER_SECOND
+        parameters:
+        - ''
+      - type: IN_RANGE
+        parameters:
+        - '0'
+        - '1000000000'
+        error_handler: DISCARD_VALUE
+      tags:
+      - tag: component
+        value: anti-bombing
+    - uuid: 76ff865632d84d8c8864a8e134b36f3c
+      name: 'Kerio Connect: пользователей в лицензии'
+      type: DEPENDENT
+      key: kerio.license.users
+      delay: '0'
+      value_type: UNSIGNED
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.license.users
+      tags:
+      - tag: component
+        value: license
+    - uuid: cde7b4e944894e60adf047b0a6616676
+      name: 'Kerio Connect: дата окончания лицензии'
+      type: DEPENDENT
+      key: kerio.license.expiry
+      delay: '0'
+      value_type: UNSIGNED
+      units: unixtime
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.license.expirations[?(@.type=="License")].date.first()
+      tags:
+      - tag: component
+        value: license
+    - uuid: 5e22ab4353564337aabfeaf753f79c59
+      name: 'Kerio Connect: дней до окончания лицензии'
+      type: DEPENDENT
+      key: kerio.license.days
+      delay: '0'
+      value_type: UNSIGNED
+      units: d
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.license.expirations[?(@.type=="License")].remainingDays.first()
+      tags:
+      - tag: component
+        value: license
+      triggers:
+      - uuid: d4feb43a01054edca1e86881b91f16f5
+        expression: last(/Kerio Connect by Zabbix agent/kerio.license.days)<30
+        name: 'Kerio Connect: лицензия кончится меньше чем через 30 дней'
+        event_name: 'Kerio Connect на {HOST.NAME}: дней до окончания лицензии: {ITEM.LASTVALUE1}'
+        priority: WARNING
+        tags:
+        - tag: scope
+          value: availability
+        manual_close: 'YES'
+        description: 'Продлите лицензию Kerio Connect. Осталось дней: {ITEM.VALUE1}.'
+        dependencies:
+        - *id001
+    - uuid: 71bb0756299d433686e1722ec19fe99f
+      name: 'Kerio Connect: версия сервера'
+      type: DEPENDENT
+      key: kerio.version
+      delay: '0'
+      trends: '0'
+      value_type: TEXT
+      master_item:
+        key: kerio.api.master
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.server.version
+      tags:
+      - tag: component
+        value: info
+    discovery_rules:
+    - uuid: 0458b06db18a40088d0eda9c10ca34a8
+      name: 'Kerio Connect: обнаружение служб'
+      type: ZABBIX_ACTIVE
+      key: kerio.services.discovery
+      delay: 10m
+      timeout: 30s
+      item_prototypes:
+      - uuid: 50d3db28ed68476db1497bdaec2e516f
+        name: 'Kerio Connect: состояние службы {#SERVICE}'
+        type: DEPENDENT
+        key: kerio.service.status[{#SERVICE}]
+        delay: '0'
+        value_type: UNSIGNED
+        master_item:
+          key: kerio.api.master
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.services[?(@.name=="{#SERVICE}")].isRunning.first()
+        - type: BOOL_TO_DECIMAL
+        tags:
+        - tag: component
+          value: services
+        - tag: service
+          value: '{#SERVICE}'
+        trigger_prototypes:
+        - uuid: 976e5145f8344785a1e405774bcfeca6
+          expression: last(/Kerio Connect by Zabbix agent/kerio.service.status[{#SERVICE}])=0 and "{#STARTTYPE}"="Automatic"
+          name: 'Kerio Connect: служба {#SERVICE} не работает'
+          event_name: 'Kerio Connect на {HOST.NAME}: служба {#SERVICE} (Automatic) не работает'
+          priority: HIGH
+          tags:
+          - tag: scope
+            value: availability
+          manual_close: 'YES'
+          description: Не работает служба Kerio с типом запуска Automatic. По службам с ручным запуском тревоги нет, хотя их состояние собирается. Чтобы тревога по службе Automatic больше не приходила, поставьте ей в Kerio тип запуска Manual.
+          dependencies:
+          - *id001
