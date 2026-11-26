@@ -9,7 +9,7 @@ zabbix_export:
     name: Kerio Connect by Script
     vendor:
       name: itforprof.com
-      version: 1.2.0
+      version: 1.3.0
     description: 'Zabbix 7 templates for monitoring Kerio Connect via JSON-RPC Admin API.
 
 
@@ -60,9 +60,6 @@ zabbix_export:
     - macro: '{$KERIO.QUEUE.STUCK.AGE}'
       value: 1h
       description: Age after which a message with a 4.x.x (temporary) status counts as stuck.
-    - macro: '{$KERIO.QUEUE.STUCK.DOMAINS}'
-      value: '3'
-      description: Stuck messages to at least this many recipient domains mean outbound delivery is failing, not one dead recipient.
     - macro: '{$KERIO.QUEUE.AGE.HIGH}'
       value: 24h
       description: Oldest queued message age that raises a warning. It clears when Kerio bounces the message (Smtp.get bounceInterval).
@@ -461,7 +458,7 @@ zabbix_export:
         return withSession('Zabbix Queue', function () {
             var r = batchCall([
                 { method: 'Server.getServerTime', params: {} },
-                // shortcut: the oldest 500 entries only, so stuck_domains is blind when they span fewer domains than the trigger needs; page through totalItems once several Queue.get in one Batch.run is verified live.
+                // shortcut: the oldest 500 entries only, so stuck and stuck_domains undercount a longer queue; page through totalItems once several Queue.get in one Batch.run is verified live.
                 { method: 'Queue.get', params: { query: { start: 0, limit: 500, orderBy: [{ columnName: 'creationTime', direction: 'Asc' }] } } }
             ]);
             return JSON.stringify(queueStats(r[1].list || [], r[0].info.currentTime, r[0].info.timezoneOffset, seconds(params.stuck_age)));
@@ -543,20 +540,6 @@ zabbix_export:
       tags:
       - tag: component
         value: queue
-      triggers:
-      - uuid: 2c2dd413a62c43a4ba5e7d4ed9210882
-        expression: last(/Kerio Connect by Script/kerio.queue.stuck.domains)>={$KERIO.QUEUE.STUCK.DOMAINS}
-        name: 'Kerio Connect: Outbound delivery failing'
-        event_name: 'Kerio Connect on {HOST.NAME}: messages older than {$KERIO.QUEUE.STUCK.AGE} stuck for {ITEM.LASTVALUE1} recipient domains'
-        priority: AVERAGE
-        tags:
-        - tag: scope
-          value: availability
-        manual_close: 'YES'
-        description: Messages with a temporary (4.x.x) status older than {$KERIO.QUEUE.STUCK.AGE} wait for at least {$KERIO.QUEUE.STUCK.DOMAINS} different recipient domains. One dead recipient does not trigger this; a broken outbound path (relay, NAT, DNS, blocked port 25) does.
-        dependencies:
-        - name: 'Kerio Connect: API data collection failed'
-          expression: nodata(/Kerio Connect by Script/kerio.api.master,5m)=1
     - uuid: 1f0cf68cb77b4d86a08e08a3a3472fe9
       name: 'Kerio Connect: Get relay check data'
       type: SCRIPT

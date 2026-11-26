@@ -3,7 +3,8 @@
 Sync src/*.js into the Zabbix template YAML `params:` fields.
 
 Zabbix executes the JS embedded in the YAML, not the standalone .js files.
-This tool rewrites every Script `params:` field in the Script template from
+This tool rewrites every Script `params:` field in both language versions of
+the Script template from
 `src/kerio_api.js` (shared client) followed by the item's own collector file.
 
 We parse the YAML, set the field, then re-serialise as PyYAML block-scalar
@@ -18,7 +19,10 @@ from pathlib import Path
 
 import yaml
 
-SCRIPT_TEMPLATE = Path("template/kerio_connect_script/template_app_kerio_connect_script.yaml")
+SCRIPT_TEMPLATES = [
+    Path("template/kerio_connect_script/template_app_kerio_connect_script.yaml"),
+    Path("template/kerio_connect_script/template_app_kerio_connect_script_ru.yaml"),
+]
 COMMON_JS = Path("src/kerio_api.js")
 # Script item / LLD rule key -> its collector.
 SCRIPTS = {
@@ -64,20 +68,22 @@ def apply(doc: dict) -> bool:
 
 def main():
     check_only = "--check" in sys.argv
-    doc = yaml.safe_load(SCRIPT_TEMPLATE.read_text())
-    if not apply(doc):
-        print("Already in sync.")
-        return
-    new_text = yaml.dump(doc, sort_keys=False, allow_unicode=True, width=10000)
-    if check_only:
+    drift = []
+    for path in SCRIPT_TEMPLATES:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not apply(doc):
+            print(f"Already in sync: {path}")
+            continue
+        drift.append(path)
+        if not check_only:
+            path.write_text(yaml.dump(doc, sort_keys=False, allow_unicode=True, width=10000), encoding="utf-8")
+            print(f"Updated {path}")
+    if check_only and drift:
         sys.exit(
-            "DRIFT: src/*.js differ from the embedded params: blocks in the "
-            "Script template. "
-            "Run: python3 tools/sync_template_js.py"
+            "DRIFT: src/*.js differ from the embedded params: blocks in "
+            + ", ".join(map(str, drift))
+            + ". Run: python3 tools/sync_template_js.py"
         )
-    SCRIPT_TEMPLATE.write_text(new_text)
-    print(f"Updated {SCRIPT_TEMPLATE}")
-
 
 if __name__ == "__main__":
     main()

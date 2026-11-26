@@ -89,6 +89,9 @@ Response path: `result.statistics`
 - `storage.percentage` is a **string** (e.g., `"92"`)
 - `uptime.days` is an **integer**
 - All connection counts are **cumulative since server start** (not active/current)
+- `transmitted.count` = `deliveredToLocals.count` + `mx.count` + `relay.count` (checked on three live servers: the sum
+  matches within 1–3 messages). It includes local delivery, so `kerio.smtp.messages.out` does not measure mail
+  leaving the server. On a server that delivers straight to recipient MX (`relay.count` = 0), external delivery is `mx.count`
 
 ---
 
@@ -214,6 +217,9 @@ Server local time = UTC + `timezoneOffset` minutes. Queue and log timestamps are
 `result = {"list": [...], "totalItems": N, "volume": {...}}`, entry:
 `{"id", "creationTime": "YYYY-MM-DD HH:MM", "nextTry": "YYYY-MM-DD HH:MM", "messageSize", "from", "to", "status": "4.4.1 Cannot connect to host", "authSender", "senderIp"}`.
 Entries carry customer addresses: the template returns aggregates only.
+`status` is the only error field: there is no remote host or attempt count. `4.4.1 Cannot connect to host` looks the
+same for a dead recipient server and for a blocked outbound path. A DNS failure in Kerio is `5.5.4 Cannot find hostname
+in DNS`, a permanent error: the message leaves the queue, so the stuck counters never see it.
 
 ### Logs.get
 ```json
